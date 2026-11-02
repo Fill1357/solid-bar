@@ -61,9 +61,6 @@ jobs:
         with:
           packages: 'platform-tools build-tools;34.0.0 platforms;android-34'
 
-      - name: Generate Telegram JAR from APK
-        run: just update-apk telegram.apk
-
       - name: Point Gradle to runner Android SDK
         run: |
           printf 'sdk.dir=%s\n' "$ANDROID_SDK_ROOT" > local.properties
@@ -82,6 +79,9 @@ jobs:
       - name: Set up jbang
         uses: jbangdev/setup-jbang@main
 
+      - name: Generate Telegram JAR from APK
+        run: just update-apk telegram.apk
+        
       - name: Bump plugin version
         env:
           VERSION: ${{ inputs.version }}
