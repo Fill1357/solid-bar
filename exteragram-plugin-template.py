@@ -4,8 +4,8 @@ __version__ = "1.0.0"
 __author__ = "YourName"
 __description__ = "Глобально отключает размытие и жидкое стекло во всем интерфейсе"
 
-# DEX_START
-# DEX_END
+# dex_start
+# dex_end
 
 def init():
     pass
