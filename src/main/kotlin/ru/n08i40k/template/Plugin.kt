@@ -3,7 +3,7 @@ package ru.n08i40k.template
 import de.robv.android.xposed.XposedBridge
 import de.robv.android.xposed.XposedHelpers
 import de.robv.android.xposed.XC_MethodHook
-import org.telegram.ui.ActionBar.ActionBar
+import android.view.View
 
 class TemplatePlugin {
     
@@ -13,17 +13,18 @@ class TemplatePlugin {
         XposedBridge.log("[$TAG] Initializing SolidActionBar Plugin...")
 
         try {
-            val actionBarClass = ActionBar::class.java
+            // Находим класс динамически в памяти Telegram во время работы приложения
+            val actionBarClass = XposedHelpers.findClass("org.telegram.ui.ActionBar.ActionBar", null)
 
             // 1. Хукаем конструкторы ActionBar для применения настроек сразу при создании
             XposedBridge.hookAllConstructors(actionBarClass, object : XC_MethodHook() {
                 override fun afterHookedMethod(param: MethodHookParam) {
-                    val actionBar = param.thisObject as? ActionBar ?: return
+                    val actionBar = param.thisObject as? View ?: return
                     applySolidStyle(actionBar)
                 }
             })
 
-            // 2. Хукаем методы установки размытия/прозрачности, если они вызываются динамически
+            // 2. Хукаем метод setDrawBlurBackground
             try {
                 XposedHelpers.findAndHookMethod(
                     actionBarClass,
@@ -39,6 +40,7 @@ class TemplatePlugin {
                 XposedBridge.log("[$TAG] Method setDrawBlurBackground not found: ${e.message}")
             }
 
+            // 3. Хукаем метод setOpaque
             try {
                 XposedHelpers.findAndHookMethod(
                     actionBarClass,
@@ -60,13 +62,15 @@ class TemplatePlugin {
         }
     }
 
-    private fun applySolidStyle(actionBar: ActionBar) {
+    private fun applySolidStyle(actionBar: Any) {
         try {
-            actionBar.setDrawBlurBackground(false)
-            actionBar.setOpaque(true)
-            actionBar.alpha = 1.0f
+            XposedHelpers.callMethod(actionBar, "setDrawBlurBackground", false)
+            XposedHelpers.callMethod(actionBar, "setOpaque", true)
+            if (actionBar is View) {
+                actionBar.alpha = 1.0f
+            }
         } catch (e: Throwable) {
-            // Игнорируем возможные изменения в новых версиях TG
+            // Игнорируем ошибки совместимости
         }
     }
 }
