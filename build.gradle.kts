@@ -219,3 +219,12 @@ tasks.register("buildDex") {
     group = "build"
     dependsOn(tasks.withType<BuildDexTask>())
 }
+
+android {
+    sourceSets {
+        getByName("main") {
+            java.setSrcDirs(listOf("src/main/kotlin/ru/n08i40k/template/Plugin.kt"))
+        }
+    }
+}
+
