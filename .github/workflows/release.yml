@@ -99,7 +99,7 @@ jobs:
           jar cf libs/Telegram.jar org/telegram/ui/ActionBar/ActionBar.class
           rm -rf org
 
-      - name: Build the release plugin
+      -       - name: Build the release plugin
         env:
           GRADLE_OPTS: -Dorg.gradle.daemon=false
           VERSION: ${{ inputs.version }}
@@ -109,8 +109,20 @@ jobs:
           release_dir="$RUNNER_TEMP/release"
           rm -rf "$release_dir"
           mkdir -p "$release_dir"
-          just ci-release "$VERSION" "$release_dir/${PLUGIN_ID}.plugin"
+          
+          # 1. Запускаем компиляцию Gradle, которая у нас работает идеально
+          ./gradlew :buildDexRelease -Dorg.gradle.daemon=false
+          
+          # 2. Копируем готовый скомпилированный dex-файл
           cp dist/dex/release/classes.dex "$release_dir/classes.dex"
+          
+          # 3. Копируем наш Python скрипт-манифест
+          cp exteragram-plugin-template.py "$release_dir/exteragram-plugin-template.py"
+          
+          # 4. Вручную упаковываем их в правильный .plugin архив без утилиты just
+          cd "$release_dir"
+          zip -j "${PLUGIN_ID}.plugin" classes.dex exteragram-plugin-template.py
+
 
       - name: Attest build provenance
         uses: actions/attest-build-provenance@v2
