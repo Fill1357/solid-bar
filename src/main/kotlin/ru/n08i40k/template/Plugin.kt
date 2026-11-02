@@ -5,6 +5,7 @@ import de.robv.android.xposed.XposedHelpers
 import de.robv.android.xposed.XC_MethodHook
 import android.view.View
 
+// Имитация структуры для обмана компилятора, чтобы не качать 60МБ JAR-файл
 class TemplatePlugin {
     
     val TAG: String = "SolidActionBar" 
@@ -13,10 +14,10 @@ class TemplatePlugin {
         XposedBridge.log("[$TAG] Initializing SolidActionBar Plugin...")
 
         try {
-            // Находим класс динамически в памяти Telegram во время работы приложения
+            // Находим класс динамически в памяти самого AyuGram/exteraGram во время работы
             val actionBarClass = XposedHelpers.findClass("org.telegram.ui.ActionBar.ActionBar", null)
 
-            // 1. Хукаем конструкторы ActionBar для применения настроек сразу при создании
+            // 1. Перехватываем создание панели
             XposedBridge.hookAllConstructors(actionBarClass, object : XC_MethodHook() {
                 override fun afterHookedMethod(param: MethodHookParam) {
                     val actionBar = param.thisObject as? View ?: return
@@ -24,7 +25,7 @@ class TemplatePlugin {
                 }
             })
 
-            // 2. Хукаем метод setDrawBlurBackground
+            // 2. Блокируем включение размытия
             try {
                 XposedHelpers.findAndHookMethod(
                     actionBarClass,
@@ -40,7 +41,7 @@ class TemplatePlugin {
                 XposedBridge.log("[$TAG] Method setDrawBlurBackground not found: ${e.message}")
             }
 
-            // 3. Хукаем метод setOpaque
+            // 3. Заставляем панель быть сплошной (Opaque)
             try {
                 XposedHelpers.findAndHookMethod(
                     actionBarClass,
@@ -70,7 +71,7 @@ class TemplatePlugin {
                 actionBar.alpha = 1.0f
             }
         } catch (e: Throwable) {
-            // Игнорируем ошибки совместимости
+            // Игнорируем возможные мелкие ошибки
         }
     }
 }
