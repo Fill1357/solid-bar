@@ -12,7 +12,9 @@ class TemplatePlugin {
             // 1. Отключаем глобальные флаги размытия
             val sharedConfigClass = XposedHelpers.findClass("org.telegram.messenger.SharedConfig", null)
             XposedBridge.hookAllMethods(sharedConfigClass, "isDrawingBlurAvailable", object : XC_MethodHook() {
-                override fun afterHookedMethod(param: MethodHookParam) { param.result = false }
+                override fun afterHookedMethod(param: MethodHookParam) { 
+                    param.result = false 
+                }
             })
 
             // 2. Выправляем верхнюю панель чата
@@ -26,8 +28,8 @@ class TemplatePlugin {
                 }
             })
         } catch (e: Throwable) {
-            XposedBridge.log("[SolidInterface] Error: ${e.message}")
+            val msg = e.message ?: "Unknown error"
+            XposedBridge.log("[SolidInterface] Error occurred: " + msg)
         }
     }
 }
-
