@@ -80,7 +80,7 @@ jobs:
         uses: jbangdev/setup-jbang@main
 
       - name: Generate Telegram JAR from APK
-        run: just update-apk telegram.apk
+        run: python scripts/update_apk.py telegram.apk
         
       - name: Bump plugin version
         env:
