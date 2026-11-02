@@ -53,26 +53,16 @@ jobs:
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
-          distribution: temurin
-          java-version: "21"
-          cache: gradle
+          distribution: 'temurin'
+          java-version: '17'
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Android SDK packages
-        run: |
-          yes | sdkmanager --licenses >/dev/null
-          sdkmanager "platform-tools" "build-tools;36.1.0" "platforms;android-36.1"
-
-      - name: Point Gradle to runner Android SDK
-        run: |
-          printf 'sdk.dir=%s\n' "$ANDROID_SDK_ROOT" > local.properties
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.14"
+          python-version: "3.11"
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v6
@@ -116,7 +106,7 @@ jobs:
       - name: Configure Git author
         run: |
           git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.email "41898282+github-actions[bot]@://github.com"
 
       - name: Commit release metadata
         env:
