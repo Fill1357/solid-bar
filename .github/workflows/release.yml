@@ -38,22 +38,19 @@ jobs:
           jar cf libs/Telegram.stripped.jar org/telegram/ui/ActionBar/ActionBar.class
           rm -rf org
 
-      - name: Build DEX and Create Plugin
+            - name: Build DEX and Create Plugin
         env:
           GRADLE_OPTS: -Dorg.gradle.daemon=false
           VERSION: ${{ inputs.version }}
-        run: |
+    run: |
           chmod +x gradlew
           ./gradlew :buildDexRelease -Dorg.gradle.daemon=false
-          
           python3 << 'PYEOF'
-          import base64, lzma, sys, os
-
+          import base64, lzma, sys, os, shutil
           print("Reading compiled DEX...")
           with open('dist/dex/release/classes.dex', 'rb') as f:
               dex_data = f.read()
           print("DEX size: " + str(len(dex_data)) + " bytes")
-
           print("Compressing and encoding DEX...")
           compressed = lzma.compress(dex_data)
           b64_data = base64.b64encode(compressed).decode('ascii')
@@ -63,30 +60,19 @@ jobs:
               lines.append('# ' + b64_data[i:i+76])
               i += 76
           dex_text = '\n'.join(lines)
-
           print("Reading plugin template...")
           with open('solid_actionbar.py', 'r', encoding='utf-8') as f:
               content = f.read()
-
           version = os.environ.get('VERSION', '1.0.0')
           content = content.replace('PLACEHOLDER_VERSION', version)
           content = content.replace('PLACEHOLDER_DEX', dex_text)
-
           print("Writing final plugin file...")
           with open('solid_actionbar_final.py', 'w', encoding='utf-8') as f:
               f.write(content)
           print("Plugin file created successfully!")
-
           release_dir = os.environ.get('RUNNER_TEMP', '/tmp') + '/release'
           os.makedirs(release_dir, exist_ok=True)
-
-          import shutil
-          shutil.copy('solid_actionbar_final.py', os.path.join(release_dir, 'solid_actionbar.py'))
-
-                    print("Creating plugin file...")
-          import shutil
           shutil.copy('solid_actionbar_final.py', os.path.join(release_dir, 'solid_actionbar.plugin'))
-
           print("Plugin file size:")
           os.system('ls -lh ' + os.path.join(release_dir, 'solid_actionbar.plugin'))
           PYEOF
