@@ -8,10 +8,14 @@ import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.view.View
 import android.app.AlertDialog
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.DialogInterface
 
 object Plugin {
     private const val TAG = "SolidBarPlugin"
     private var appContext: Context? = null
+    private var lastResult: String = "No data yet. Click 'Check Plugin Status' in settings."
 
     @JvmStatic
     fun getBuildDate(): String = "2026-11-04"
@@ -25,13 +29,12 @@ object Plugin {
             val activityThread = Class.forName("android.app.ActivityThread")
             val currentApp = activityThread.getMethod("currentApplication").invoke(null)
             appContext = currentApp as? Context
-            showToast("Plugin loaded! Making bars solid...")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to get context", e)
         }
         
         android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-            makeBarsSolid()
+            makeBarsSilent()
         }, 2000)
     }
 
@@ -49,29 +52,36 @@ object Plugin {
     fun invokeChatContextMenuCallback(key: String, dialogId: Long) {}
 
     @JvmStatic
-    fun invokeSettingsActionCallback(key: String) {}
-
-    private fun showToast(message: String) {
-        try {
-            appContext?.let { ctx ->
-                android.os.Handler(android.os.Looper.getMainLooper()).post {
-                    Toast.makeText(ctx, message, Toast.LENGTH_LONG).show()
-                }
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Toast error", e)
+    fun invokeSettingsActionCallback(key: String) {
+        if (key == "check_status") {
+            showStatusDialog()
         }
     }
 
-    private fun showDialog(title: String, message: String) {
+    private fun showStatusDialog() {
         try {
             appContext?.let { ctx ->
                 android.os.Handler(android.os.Looper.getMainLooper()).post {
-                    AlertDialog.Builder(ctx)
-                        .setTitle(title)
-                        .setMessage(message)
-                        .setPositiveButton("OK", null)
-                        .show()
+                    val builder = AlertDialog.Builder(ctx)
+                    builder.setTitle("Solid Interface - Status")
+                    builder.setMessage(lastResult)
+                    
+                    builder.setPositiveButton("Copy", object : DialogInterface.OnClickListener {
+                        override fun onClick(dialog: DialogInterface?, which: Int) {
+                            try {
+                                val clipboard = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                val clip = ClipData.newPlainText("SolidBar Debug", lastResult)
+                                clipboard.setPrimaryClip(clip)
+                                Toast.makeText(ctx, "Copied to clipboard!", Toast.LENGTH_SHORT).show()
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Clipboard error", e)
+                            }
+                        }
+                    })
+                    
+                    builder.setNegativeButton("Close", null)
+                    
+                    builder.show()
                 }
             }
         } catch (e: Exception) {
@@ -79,8 +89,9 @@ object Plugin {
         }
     }
 
-    private fun makeBarsSolid() {
+    private fun makeBarsSilent() {
         val context = appContext ?: run {
+            lastResult = "Error: No context available"
             Log.e(TAG, "No context available")
             return
         }
@@ -133,11 +144,8 @@ object Plugin {
             Log.e(TAG, "ActionBar error", e)
         }
 
-        // Метод 2: ChatActivityEnterView
+        // Метод 2: Theme
         try {
-            val enterViewClass = Class.forName("org.telegram.ui.Components.ChatActivityEnterView")
-            val colorDrawable = ColorDrawable(Color.parseColor("#FF1C1C1E"))
-            
             val themeClass = Class.forName("org.telegram.messenger.Theme")
             val chatWallpaperField = themeClass.getDeclaredField("chat_wallpaper")
             chatWallpaperField.isAccessible = true
@@ -150,7 +158,7 @@ object Plugin {
             Log.e(TAG, "EnterView error", e)
         }
 
-        // Метод 3: SharedConfig blur flags
+        // Метод 3: SharedConfig
         try {
             val sharedConfigClass = Class.forName("org.telegram.messenger.SharedConfig")
             for (field in sharedConfigClass.declaredFields) {
@@ -172,6 +180,39 @@ object Plugin {
             results.append("SC:err ")
         }
 
-        // Метод 4: Принудительная перерисовка
+        // Метод 4: Redraw
         try {
-            val activityThread
+            val activityThread = Class.forName("android.app.ActivityThread")
+            val currentActivityThread = activityThread.getMethod("currentActivityThread").invoke(null)
+            val activitiesField = currentActivityThread.javaClass.getDeclaredField("mActivities")
+            activitiesField.isAccessible = true
+            val activities = activitiesField.get(currentActivityThread)
+            
+            if (activities != null) {
+                val activitiesArray = if (activities is Array<*>) activities else (activities as? Collection<*>)?.toTypedArray()
+                if (activitiesArray != null) {
+                    for (activityRecord in activitiesArray) {
+                        if (activityRecord == null) continue
+                        try {
+                            val activityField = activityRecord.javaClass.getDeclaredField("activity")
+                            activityField.isAccessible = true
+                            val activity = activityField.get(activityRecord)
+                            
+                            if (activity != null) {
+                                val contentView = (activity as android.app.Activity).findViewById<View>(android.R.id.content)
+                                contentView?.invalidate()
+                                contentView?.requestLayout()
+                                results.append("Redraw:OK ")
+                            }
+                        } catch (e: Exception) {}
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            results.append("Redraw:err ")
+        }
+
+        lastResult = "Success: $successCount\n\n$results"
+        Log.d(TAG, lastResult)
+    }
+}
