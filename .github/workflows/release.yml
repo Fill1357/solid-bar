@@ -83,14 +83,11 @@ jobs:
           import shutil
           shutil.copy('solid_actionbar_final.py', os.path.join(release_dir, 'solid_actionbar.py'))
 
-          print("Creating plugin archive...")
-          os.chdir(release_dir)
-          os.system('zip -j solid_actionbar.plugin solid_actionbar.py')
-          os.chdir('/home/runner/work/solid-bar/solid-bar')
+                    print("Creating plugin file...")
+          import shutil
+          shutil.copy('solid_actionbar_final.py', os.path.join(release_dir, 'solid_actionbar.plugin'))
 
-          print("Archive contents:")
-          os.system('unzip -l ' + os.path.join(release_dir, 'solid_actionbar.plugin'))
-          print("Archive size:")
+          print("Plugin file size:")
           os.system('ls -lh ' + os.path.join(release_dir, 'solid_actionbar.plugin'))
           PYEOF
 
