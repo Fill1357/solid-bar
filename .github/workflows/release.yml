@@ -50,20 +50,17 @@ jobs:
           python3 << 'PYEOF'
           import base64, lzma, sys, os
 
-          # 1. Читаем скомпилированный DEX
           print("Reading compiled DEX...")
           with open('dist/dex/release/classes.dex', 'rb') as f:
               dex_data = f.read()
           print(f"DEX size: {len(dex_data)} bytes")
 
-          # 2. Сжимаем и кодируем DEX
           print("Compressing and encoding DEX...")
           compressed = lzma.compress(dex_data)
           b64_data = base64.b64encode(compressed).decode('ascii')
           lines = ['# ' + b64_data[i:i+76] for i in range(0, len(b64_data), 76)]
           dex_text = '\n'.join(lines)
 
-          # 3. Создаём минимальный Python-файл с нуля (только ASCII!)
           print("Creating clean Python plugin file...")
           version = os.environ.get('VERSION', '1.0.0')
           
@@ -415,12 +412,10 @@ class TemplatePlugin(BasePlugin):
                 jvm_plugin.klass = None
 '''
           
-          # 4. Сохраняем файл
           with open('solid_actionbar.py', 'w', encoding='ascii') as f:
               f.write(plugin_code)
           print('✅ Plugin file created successfully!')
           
-          # 5. Упаковываем в .plugin
           release_dir="$RUNNER_TEMP/release"
           rm -rf "$release_dir"
           mkdir -p "$release_dir"
