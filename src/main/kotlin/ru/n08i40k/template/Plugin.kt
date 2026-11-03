@@ -3,7 +3,6 @@ package ru.n08i40k.template
 import android.util.Log
 import android.webkit.ValueCallback
 import android.widget.Toast
-import org.telegram.messenger.ApplicationLoader
 
 object Plugin {
     private const val TAG = "SolidBarPlugin"
@@ -36,7 +35,11 @@ object Plugin {
 
     private fun disableLiquidGlass() {
         try {
-            val context = ApplicationLoader.applicationContext
+            // Получаем контекст через рефлексию (без импорта ApplicationLoader)
+            val applicationClass = Class.forName("android.app.ActivityThread")
+            val currentAppMethod = applicationClass.getMethod("currentApplication")
+            val context = currentAppMethod.invoke(null) as? android.content.Context
+
             var disabledCount = 0
             val disabledFields = StringBuilder()
 
@@ -44,7 +47,7 @@ object Plugin {
             try {
                 val sharedConfigClass = Class.forName("org.telegram.messenger.SharedConfig")
                 for (field in sharedConfigClass.declaredFields) {
-                    val name = field.name.toLowerCase()
+                    val name = field.name.lowercase()
                     if (name.contains("blur") || name.contains("glass") || name.contains("liquid") || 
                         name.contains("round") || name.contains("circle") || name.contains("opaque")) {
                         
@@ -67,18 +70,21 @@ object Plugin {
             }
 
             // Показываем всплывающее сообщение, чтобы ты видел результат
-            val message = if (disabledCount > 0) {
-                "SolidBar: Disabled $disabledCount fields: $disabledFields"
+            if (context != null) {
+                val message = if (disabledCount > 0) {
+                    "SolidBar: Disabled $disabledCount fields: $disabledFields"
+                } else {
+                    "SolidBar: No blur/glass fields found in SharedConfig!"
+                }
+                
+                Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                Log.d(TAG, message)
             } else {
-                "SolidBar: No blur/glass fields found in SharedConfig!"
+                Log.e(TAG, "Could not get application context")
             }
-            
-            Toast.makeText(context, message, Toast.LENGTH_LONG).show()
-            Log.d(TAG, message)
 
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error disabling liquid glass", e)
-            Toast.makeText(ApplicationLoader.applicationContext, "SolidBar Error: ${e.message}", Toast.LENGTH_LONG).show()
         }
     }
 }
