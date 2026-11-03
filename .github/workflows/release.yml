@@ -20,14 +20,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Parse plugin metadata
-        id: plugin
-        run: |
-          id=$(grep -oP '(?<=__id__ = ")[^"]+' exteragram_plugin_template.py)
-          name=$(grep -oP '(?<=__name__ = ")[^"]+' exteragram_plugin_template.py)
-          echo "id=$id" >> $GITHUB_OUTPUT
-          echo "name=$name" >> $GITHUB_OUTPUT
-
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
@@ -47,78 +39,87 @@ jobs:
           jar cf libs/Telegram.stripped.jar org/telegram/ui/ActionBar/ActionBar.class
           rm -rf org
 
-      - name: Build and Embed DEX into Python
+      - name: Build DEX and Create Clean Plugin
         env:
           GRADLE_OPTS: -Dorg.gradle.daemon=false
           VERSION: ${{ inputs.version }}
-          PLUGIN_ID: ${{ steps.plugin.outputs.id }}
         run: |
           chmod +x gradlew
           ./gradlew :buildDexRelease -Dorg.gradle.daemon=false
           
-          python3 -c "
-          import base64, lzma, sys, os
-          
-          print('Reading DEX...')
+          python3 << 'PYEOF'
+          import base64, lzma, sys, os, urllib.request
+
+          # 1. Скачиваем ОРИГИНАЛЬНЫЙ чистый шаблон от автора n08i40k
+          url = "https://raw.githubusercontent.com/n08i40k/exteragram-plugin-template/master/exteragram-plugin-template.py"
+          print("Downloading original clean template...")
+          with urllib.request.urlopen(url) as response:
+              content = response.read().decode('utf-8')
+
+          # 2. Автоматически меняем метаданные на наши
+          print("Updating metadata...")
+          content = content.replace('__id__ = "exteragram-plugin-template"', '__id__ = "solid_actionbar"')
+          content = content.replace('__name__ = "exteraGram plugin template"', '__name__ = "Solid Interface"')
+          content = content.replace('__author__ = "@n08i40k_extera"', '__author__ = "Fill1357"')
+          content = content.replace('__description__ = "Шаблон плагина exteraGram с DEX, встроенным прямо в исходник"', '__description__ = "Disables blur and liquid glass globally"')
+          content = content.replace('__version__ = "0.0.0"', f'__version__ = "{os.environ.get("VERSION", "1.0.0")}"')
+
+          # 3. Читаем наш скомпилированный DEX
+          print("Reading compiled DEX...")
           with open('dist/dex/release/classes.dex', 'rb') as f:
               dex_data = f.read()
-          print(f'DEX size: {len(dex_data)} bytes')
-          
-          print('Compressing...')
+          print(f"DEX size: {len(dex_data)} bytes")
+
+          # 4. Сжимаем и кодируем DEX
+          print("Compressing and encoding DEX...")
           compressed = lzma.compress(dex_data)
           b64_data = base64.b64encode(compressed).decode('utf-8')
-          
           lines = ['# ' + b64_data[i:i+76] for i in range(0, len(b64_data), 76)]
           dex_text = '\n'.join(lines)
-          
-          print('Reading Python file...')
-          with open('exteragram_plugin_template.py', 'r', encoding='utf-8') as f:
-              content = f.read()
-          
+
+          # 5. Встраиваем DEX в скачанный шаблон
+          print("Embedding DEX into template...")
           start_marker = '# === EMDEDDED DEX BEGIN ==='
           end_marker = '# === EMDEDDED DEX END ==='
-          
           start_idx = content.find(start_marker)
           end_idx = content.find(end_marker)
-          
+
           if start_idx != -1 and end_idx != -1:
               new_content = content[:start_idx + len(start_marker)] + '\n' + dex_text + '\n' + content[end_idx:]
-              with open('exteragram_plugin_template.py', 'w', encoding='utf-8') as f:
+              # Сохраняем как solid_actionbar.py (имя должно совпадать с __id__)
+              with open('solid_actionbar.py', 'w', encoding='utf-8') as f:
                   f.write(new_content)
-              print('✅ DEX embedded successfully')
+              print('✅ DEX embedded successfully into clean template!')
           else:
-              print('❌ ERROR: markers not found')
+              print('❌ ERROR: markers not found in original template')
               sys.exit(1)
-          "
+          PYEOF
           
+          # 6. Упаковываем финальный .plugin
           release_dir="$RUNNER_TEMP/release"
           rm -rf "$release_dir"
           mkdir -p "$release_dir"
           
-          # ВАЖНО: Переименовываем файл внутри архива в <id>.py, как того требует загрузчик!
-          cp exteragram_plugin_template.py "$release_dir/${{ steps.plugin.outputs.id }}.py"
-          
           cd "$release_dir"
-          zip -j "${{ steps.plugin.outputs.id }}.plugin" "${{ steps.plugin.outputs.id }}.py"
+          zip -j "solid_actionbar.plugin" ../solid_actionbar.py
           cd -
           
-          echo "=== ПРОВЕРКА СОДЕРЖИМОГО АРХИВА ==="
-          unzip -l "$release_dir/${{ steps.plugin.outputs.id }}.plugin"
-          echo "=== РАЗМЕР АРХИВА ==="
-          ls -lh "$release_dir/${{ steps.plugin.outputs.id }}.plugin"
+          echo "=== ARCHIVE CONTENTS ==="
+          unzip -l "$release_dir/solid_actionbar.plugin"
+          ls -lh "$release_dir/solid_actionbar.plugin"
 
       - name: Attest build provenance
         uses: actions/attest-build-provenance@v2
         with:
           subject-path: |
-            ${{ runner.temp }}/release/${{ steps.plugin.outputs.id }}.plugin
+            ${{ runner.temp }}/release/solid_actionbar.plugin
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ inputs.version }}
-          name: Release v${{ inputs.version }} — ${{ steps.plugin.outputs.name }}
+          name: Release v${{ inputs.version }} — Solid Interface
           files: |
-            ${{ runner.temp }}/release/${{ steps.plugin.outputs.id }}.plugin
+            ${{ runner.temp }}/release/solid_actionbar.plugin
           draft: false
           prerelease: false
