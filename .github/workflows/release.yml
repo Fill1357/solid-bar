@@ -58,7 +58,7 @@ jobs:
           mkdir -p "$release_dir"
           ./gradlew :buildDexRelease -Dorg.gradle.daemon=false
           cp dist/dex/release/classes.dex "$release_dir/classes.dex"
-          cp exteragram-plugin-template.py "$release_dir/exteragram-plugin-template.py"
+          cp exteragram_plugin_template.py "$release_dir/exteragram-plugin-template.py"
           cd "$release_dir"
           zip -j "${PLUGIN_ID}.plugin" classes.dex exteragram-plugin-template.py
           cd -
