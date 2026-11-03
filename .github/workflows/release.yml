@@ -46,23 +46,50 @@ jobs:
           javac org/telegram/ui/ActionBar/ActionBar.java
           jar cf libs/Telegram.stripped.jar org/telegram/ui/ActionBar/ActionBar.class
           rm -rf org
-      - name: Build the release plugin
+            - name: Build and Embed DEX into Python
+        env:
+          GRADLE_OPTS: -Dorg.gradle.daemon=false
+          VERSION: ${{ inputs.version }}
+          PLUGIN_ID: ${{ steps.plugin.outputs.id }}
+        
+      - name: Build and Embed DEX into Python
         env:
           GRADLE_OPTS: -Dorg.gradle.daemon=false
           VERSION: ${{ inputs.version }}
           PLUGIN_ID: ${{ steps.plugin.outputs.id }}
         run: |
           chmod +x gradlew
+          ./gradlew :buildDexRelease -Dorg.gradle.daemon=false
+          python3 -c "
+          import base64, lzma, os
+          with open('dist/dex/release/classes.dex', 'rb') as f:
+              dex_data = f.read()
+          compressed = lzma.compress(dex_data)
+          b64_data = base64.b64encode(compressed).decode('utf-8')
+          lines = ['# ' + b64_data[i:i+76] for i in range(0, len(b64_data), 76)]
+          dex_text = '\n'.join(lines)
+          with open('exteragram_plugin_template.py', 'r', encoding='utf-8') as f:
+              content = f.read()
+          start_marker = '# === EMDEDDED DEX BEGIN ==='
+          end_marker = '# === EMDEDDED DEX END ==='
+          start_idx = content.find(start_marker)
+          end_idx = content.find(end_marker)
+          if start_idx != -1 and end_idx != -1:
+              new_content = content[:start_idx + len(start_marker)] + '\n' + dex_text + '\n' + content[end_idx:]
+              with open('exteragram_plugin_template.py', 'w', encoding='utf-8') as f:
+                  f.write(new_content)
+              print('DEX embedded successfully')
+          else:
+              print('ERROR: markers not found')
+              exit(1)
+          "
           release_dir="$RUNNER_TEMP/release"
           rm -rf "$release_dir"
           mkdir -p "$release_dir"
-          ./gradlew :buildDexRelease -Dorg.gradle.daemon=false
-          cp dist/dex/release/classes.dex "$release_dir/classes.dex"
           cp exteragram_plugin_template.py "$release_dir/exteragram-plugin-template.py"
           cd "$release_dir"
-          zip -j "${PLUGIN_ID}.plugin" classes.dex exteragram-plugin-template.py
+          zip -j "${PLUGIN_ID}.plugin" exteragram-plugin-template.py
           cd -
-
       - name: Attest build provenance
         uses: actions/attest-build-provenance@v2
         with:
