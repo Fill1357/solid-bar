@@ -44,7 +44,7 @@ jobs:
           mkdir -p org/telegram/ui/ActionBar
           echo "package org.telegram.ui.ActionBar; public class ActionBar {}" > org/telegram/ui/ActionBar/ActionBar.java
           javac org/telegram/ui/ActionBar/ActionBar.java
-          jar cf libs/Telegram.jar org/telegram/ui/ActionBar/ActionBar.class
+          jar cf libs/Telegram.stripped.jar org/telegram/ui/ActionBar/ActionBar.class
           rm -rf org
       - name: Build the release plugin
         env:
