@@ -2,86 +2,83 @@ package ru.n08i40k.template
 
 import android.util.Log
 import android.webkit.ValueCallback
+import android.widget.Toast
+import org.telegram.messenger.ApplicationLoader
 
-// Объект Plugin — это то, что ждёт Python-загрузчик шаблона n08i40k
 object Plugin {
     private const val TAG = "SolidBarPlugin"
 
-    // 1. Метод, который запрашивает загрузчик для проверки версии
     @JvmStatic
     fun getBuildDate(): String = "2026-11-04"
 
-    // 2. Главный метод инициализации. Вызывается при загрузке плагина
     @JvmStatic
     fun inject(version: String, logger: ValueCallback<Any?>) {
-        Log.d(TAG, "✅ Solid Bar Plugin загружен! Версия: $version")
-        logger.onReceiveValue("Плагин успешно загружен")
-        
-        // Запускаем нашу магию по отключению размытия
+        Log.d(TAG, "✅ Solid Bar Plugin loaded! Version: $version")
+        logger.onReceiveValue("Plugin loaded successfully")
         disableLiquidGlass()
     }
 
-    // 3. Метод завершения инициализации (заглушка для загрузчика)
     @JvmStatic
     fun finalizeInject() {
-        Log.d(TAG, "✅ Solid Bar Plugin инициализация завершена")
+        Log.d(TAG, "✅ Solid Bar Plugin initialization complete")
     }
 
-    // 4. Метод выгрузки плагина (заглушка)
     @JvmStatic
     fun eject() {
-        Log.d(TAG, "🗑️ Solid Bar Plugin выгружен")
-    }
-
-    // 5. Заглушки для меню (чтобы загрузчик не падал, если они есть в шаблоне)
-    @JvmStatic
-    fun invokeChatContextMenuCallback(key: String, dialogId: Long) {
-        Log.d(TAG, "Menu click: $key, $dialogId")
+        Log.d(TAG, "🗑️ Solid Bar Plugin ejected")
     }
 
     @JvmStatic
-    fun invokeSettingsActionCallback(key: String) {
-        Log.d(TAG, "Settings click: $key")
-    }
+    fun invokeChatContextMenuCallback(key: String, dialogId: Long) {}
 
-    // === НАША ОСНОВНАЯ ЛОГИКА ===
+    @JvmStatic
+    fun invokeSettingsActionCallback(key: String) {}
+
     private fun disableLiquidGlass() {
         try {
-            val sharedConfigClass = Class.forName("org.telegram.messenger.SharedConfig")
-            var found = false
-            
-            // Ищем все поля, в названии которых есть "blur", "glass" или "opaque"
-            for (field in sharedConfigClass.declaredFields) {
-                if (field.name.contains("blur", ignoreCase = true) || 
-                    field.name.contains("glass", ignoreCase = true) ||
-                    field.name.contains("opaque", ignoreCase = true)) {
-                    
-                    field.isAccessible = true
-                    // Если это логическое поле (boolean), пробуем выставить false
-                    if (field.type == Boolean::class.java || field.type == Boolean::class.javaPrimitiveType) {
-                        field.set(null, false)
-                        Log.d(TAG, "🎯 Отключено поле: ${field.name}")
-                        found = true
+            val context = ApplicationLoader.applicationContext
+            var disabledCount = 0
+            val disabledFields = StringBuilder()
+
+            // Ищем все поля в SharedConfig, связанные с размытием, стеклом и кругами
+            try {
+                val sharedConfigClass = Class.forName("org.telegram.messenger.SharedConfig")
+                for (field in sharedConfigClass.declaredFields) {
+                    val name = field.name.toLowerCase()
+                    if (name.contains("blur") || name.contains("glass") || name.contains("liquid") || 
+                        name.contains("round") || name.contains("circle") || name.contains("opaque")) {
+                        
+                        field.isAccessible = true
+                        // Проверяем, что это boolean (логическое значение)
+                        if (field.type == Boolean::class.java || field.type == Boolean::class.javaPrimitiveType) {
+                            try {
+                                field.set(null, false) // Отключаем (статическое поле)
+                                disabledCount++
+                                disabledFields.append(field.name).append(", ")
+                                Log.d(TAG, "🎯 Disabled field: ${field.name}")
+                            } catch (e: Exception) {
+                                // Не статическое, пропускаем
+                            }
+                        }
                     }
                 }
-            }
-            
-            if (!found) {
-                Log.w(TAG, "⚠️ Поля blur/glass не найдены в SharedConfig. Возможно, в этой версии AyuGram они называются иначе.")
-            }
-            
-            // Дополнительная попытка: вызов метода отключения, если он существует
-            try {
-                val method = sharedConfigClass.getDeclaredMethod("setDrawingBlurAvailable", Boolean::class.javaPrimitiveType)
-                method.isAccessible = true
-                method.invoke(null, false)
-                Log.d(TAG, "🎯 Вызван метод setDrawingBlurAvailable(false)")
             } catch (e: Exception) {
-                // Это нормально, если такого метода нет
+                Log.e(TAG, "Error in SharedConfig", e)
+            }
+
+            // Показываем всплывающее сообщение, чтобы ты видел результат
+            val message = if (disabledCount > 0) {
+                "SolidBar: Disabled $disabledCount fields: $disabledFields"
+            } else {
+                "SolidBar: No blur/glass fields found in SharedConfig!"
             }
             
+            Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+            Log.d(TAG, message)
+
         } catch (e: Exception) {
-            Log.e(TAG, "❌ Ошибка при отключении liquid glass", e)
+            Log.e(TAG, "❌ Error disabling liquid glass", e)
+            Toast.makeText(ApplicationLoader.applicationContext, "SolidBar Error: ${e.message}", Toast.LENGTH_LONG).show()
         }
     }
 }
