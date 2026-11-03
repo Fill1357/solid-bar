@@ -203,7 +203,7 @@ class SettingsActions:
         try:
             self.plugin.jvm_plugin.call("invokeSettingsActionCallback", String(key), types=(String.getClass(),))
         except Exception as e:
-            self.plugin.log_exception(f"Failed to execute settings callback {key}", e)
+            self.plugin.log_exception("Failed to execute settings callback " + key, e)
 
 class TemplatePlugin(BasePlugin):
     _full_load_lock = threading.Lock()
