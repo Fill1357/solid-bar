@@ -23,8 +23,8 @@ jobs:
       - name: Parse plugin metadata
         id: plugin
         run: |
-          id=$(python3 -c "import exteragram_plugin_template as p; print(p.__id__)")
-          name=$(python3 -c "import exteragram_plugin_template as p; print(p.__name__)")
+          id=$(grep -oP '(?<=__id__ = ")[^"]+' exteragram_plugin_template.py)
+          name=$(grep -oP '(?<=__name__ = ")[^"]+' exteragram_plugin_template.py)
           echo "id=$id" >> $GITHUB_OUTPUT
           echo "name=$name" >> $GITHUB_OUTPUT
 
