@@ -56,17 +56,22 @@ jobs:
           chmod +x gradlew
           ./gradlew :buildDexRelease -Dorg.gradle.daemon=false
           
-          python3 << 'PYEOF'
-          import base64, lzma
+          python3 -c "
+          import base64, lzma, sys, os
           
+          print('Reading DEX...')
           with open('dist/dex/release/classes.dex', 'rb') as f:
               dex_data = f.read()
+          print(f'DEX size: {len(dex_data)} bytes')
           
+          print('Compressing...')
           compressed = lzma.compress(dex_data)
           b64_data = base64.b64encode(compressed).decode('utf-8')
+          
           lines = ['# ' + b64_data[i:i+76] for i in range(0, len(b64_data), 76)]
           dex_text = '\n'.join(lines)
           
+          print('Reading Python file...')
           with open('exteragram_plugin_template.py', 'r', encoding='utf-8') as f:
               content = f.read()
           
@@ -80,21 +85,27 @@ jobs:
               new_content = content[:start_idx + len(start_marker)] + '\n' + dex_text + '\n' + content[end_idx:]
               with open('exteragram_plugin_template.py', 'w', encoding='utf-8') as f:
                   f.write(new_content)
-              print('DEX embedded successfully')
+              print('✅ DEX embedded successfully')
           else:
-              print('ERROR: markers not found')
-              exit(1)
-          PYEOF
+              print('❌ ERROR: markers not found')
+              sys.exit(1)
+          "
           
           release_dir="$RUNNER_TEMP/release"
           rm -rf "$release_dir"
           mkdir -p "$release_dir"
           
-          cp exteragram_plugin_template.py "$release_dir/exteragram-plugin-template.py"
+          # ВАЖНО: Переименовываем файл внутри архива в <id>.py, как того требует загрузчик!
+          cp exteragram_plugin_template.py "$release_dir/${{ steps.plugin.outputs.id }}.py"
           
           cd "$release_dir"
-          zip -j "${PLUGIN_ID}.plugin" exteragram-plugin-template.py
+          zip -j "${{ steps.plugin.outputs.id }}.plugin" "${{ steps.plugin.outputs.id }}.py"
           cd -
+          
+          echo "=== ПРОВЕРКА СОДЕРЖИМОГО АРХИВА ==="
+          unzip -l "$release_dir/${{ steps.plugin.outputs.id }}.plugin"
+          echo "=== РАЗМЕР АРХИВА ==="
+          ls -lh "$release_dir/${{ steps.plugin.outputs.id }}.plugin"
 
       - name: Attest build provenance
         uses: actions/attest-build-provenance@v2
