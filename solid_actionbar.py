@@ -183,16 +183,27 @@ class ChatContextMenu:
         return _dialog_id_of(payload)
 
 class SettingsActions:
-    EXAMPLE = "example"
+    CHECK_STATUS = "check_status"
+    
     def __init__(self, plugin):
         self.plugin = plugin
+
     def build_settings(self):
-        return [Header(text=self.plugin._t("settings.example.title")), Text(text=self.plugin._t("settings.example.title"), icon="msg_settings", on_click=lambda _: self._on_click(self.EXAMPLE))]
+        return [
+            Header(text="Solid Interface Settings"),
+            Text(
+                text="Check Plugin Status",
+                subtext="View debug info and copy report",
+                icon="msg_settings",
+                on_click=lambda _: self._on_click(self.CHECK_STATUS),
+            ),
+        ]
+
     def _on_click(self, key):
         try:
             self.plugin.jvm_plugin.call("invokeSettingsActionCallback", String(key), types=(String.getClass(),))
         except Exception as e:
-            self.plugin.log_exception("Failed to execute settings callback " + key, e)
+            self.plugin.log_exception(f"Failed to execute settings callback {key}", e)
 
 class TemplatePlugin(BasePlugin):
     _full_load_lock = threading.Lock()
