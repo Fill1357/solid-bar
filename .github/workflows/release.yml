@@ -95,13 +95,16 @@ jobs:
               sys.exit(1)
           PYEOF
           
-          # 6. Упаковываем финальный .plugin
+                    # 6. Упаковываем финальный .plugin
           release_dir="$RUNNER_TEMP/release"
           rm -rf "$release_dir"
           mkdir -p "$release_dir"
           
+          # Копируем файл в release_dir перед упаковкой
+          cp solid_actionbar.py "$release_dir/solid_actionbar.py"
+          
           cd "$release_dir"
-          zip -j "solid_actionbar.plugin" ../solid_actionbar.py
+          zip -j "solid_actionbar.plugin" solid_actionbar.py
           cd -
           
           echo "=== ARCHIVE CONTENTS ==="
