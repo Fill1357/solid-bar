@@ -2,15 +2,12 @@ name: Release
 
 on:
   workflow_dispatch:
-    inputs:
-      version:
-        description: 'Release version'
-        required: true
-        type: string
 
 jobs:
   release:
     runs-on: ubuntu-latest
+    env:
+      AUTO_VERSION: "1.4.${{ github.run_number }}"
     permissions:
       contents: write
       id-token: write
@@ -46,7 +43,7 @@ jobs:
       - name: Build DEX and Create Plugin
         env:
           GRADLE_OPTS: -Dorg.gradle.daemon=false
-          VERSION: ${{ inputs.version }}
+          VERSION: ${{ env.AUTO_VERSION }}
         run: |
           chmod +x gradlew
           ./gradlew :buildDexRelease -Dorg.gradle.daemon=false
@@ -74,4 +71,26 @@ jobs:
           content = content.replace('PLACEHOLDER_VERSION', version)
           content = content.replace('PLACEHOLDER_DEX', dex_text)
           print("Writing final plugin file...")
-          with open('solid_action
+          with open('solid_actionbar_final.py', 'w', encoding='utf-8') as f:
+              f.write(content)
+          print("Plugin file created successfully!")
+          release_dir = os.environ.get('RUNNER_TEMP', '/tmp') + '/release'
+          os.makedirs(release_dir, exist_ok=True)
+          shutil.copy('solid_actionbar_final.py', os.path.join(release_dir, 'solid_actionbar.plugin'))
+          print("Plugin file size:")
+          os.system('ls -lh ' + os.path.join(release_dir, 'solid_actionbar.plugin'))
+          PYEOF
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: ${{ runner.temp }}/release/solid_actionbar.plugin
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.AUTO_VERSION }}
+          name: Release ${{ env.AUTO_VERSION }}
+          files: ${{ runner.temp }}/release/solid_actionbar.plugin
+          draft: false
+          prerelease: false
