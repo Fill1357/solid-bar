@@ -33,14 +33,12 @@ object Plugin {
             appContext = application
             
             if (application != null) {
-                // Регистрируем "слушатель" всех Activity
                 application.registerActivityLifecycleCallbacks(object : Application.ActivityLifecycleCallbacks {
                     override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {
                         handleActivity(activity, "created")
                     }
                     override fun onActivityStarted(activity: Activity) {}
                     override fun onActivityResumed(activity: Activity) {
-                        // Применяем при каждом возврате к Activity
                         handleActivity(activity, "resumed")
                     }
                     override fun onActivityPaused(activity: Activity) {}
@@ -56,7 +54,6 @@ object Plugin {
             showToast("Error: " + e.message)
         }
         
-        // Отключаем blur сразу
         disableBlurFlags()
     }
 
@@ -138,10 +135,8 @@ object Plugin {
         val activityName = activity.javaClass.name
         val simpleName = activity.javaClass.simpleName
         
-        // Логируем каждую Activity
         Log.d(TAG, "Activity $trigger: $activityName")
         
-        // Применяем ко ВСЕМ Activity (или можно фильтровать по имени)
         try {
             var actionBarFound = false
             
