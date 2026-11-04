@@ -32,10 +32,8 @@ object Plugin {
             showToast("Error: " + e.message)
         }
         
-        // 1. СРАЗУ отключаем флаги в SharedConfig
         disableBlurFlags()
         
-        // 2. Ждём 2 секунды, чтобы UI полностью прогрузился, и перерисовываем
         android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
             forceRedraw()
             showToast(lastResult)
@@ -132,67 +130,7 @@ object Plugin {
             
             var activitiesFound = 0
             
-            // mActivities в современном Android - это Map
+            // ВАЖНО: используем Java-метод .values() со скобками!
             if (mActivities is java.util.Map<*, *>) {
-                val activitiesMap = mActivities as java.util.Map<Any, Any>
-                for (record in activitiesMap.values) {
-                    if (record != null) {
-                        try {
-                            val activityField = record.javaClass.getDeclaredField("activity")
-                            activityField.isAccessible = true
-                            val activity = activityField.get(record) as? android.app.Activity
-                            
-                            if (activity != null && !activity.isFinishing) {
-                                activitiesFound++
-                                report.appendLine("✅ Found Activity: ${activity.javaClass.simpleName}")
-                                
-                                // 1. Пытаемся найти и изменить ActionBar
-                                try {
-                                    val actionBarField = activity.javaClass.getDeclaredField("actionBar")
-                                    actionBarField.isAccessible = true
-                                    val actionBar = actionBarField.get(activity)
-                                    
-                                    if (actionBar != null) {
-                                        val actionBarClass = actionBar.javaClass
-                                        val colorDrawable = ColorDrawable(Color.parseColor("#FF1C1C1E"))
-                                        val setBackgroundMethod = actionBarClass.getMethod("setBackgroundDrawable", android.graphics.drawable.Drawable::class.java)
-                                        setBackgroundMethod.invoke(actionBar, colorDrawable)
-                                        redrawSuccess++
-                                        report.appendLine("  ✅ ActionBar background set to solid")
-                                    }
-                                } catch (e: Exception) {
-                                    report.appendLine("  ℹ️ ActionBar not found or failed: ${e.message?.take(30)}")
-                                }
-                                
-                                // 2. Принудительная перерисовка всего окна
-                                try {
-                                    activity.window.decorView.invalidate()
-                                    activity.window.decorView.requestLayout()
-                                    redrawSuccess++
-                                    report.appendLine("  ✅ DecorView invalidated & requested layout")
-                                } catch (e: Exception) {
-                                    report.appendLine("  ❌ Failed to invalidate DecorView: ${e.message?.take(30)}")
-                                }
-                            }
-                        } catch (e: Exception) {
-                            // Игнорируем ошибки парсинга отдельных записей
-                        }
-                    }
-                }
-            }
-            
-            if (activitiesFound == 0) {
-                report.appendLine("⚠️ No active activities found in mActivities Map")
-            }
-            
-        } catch (e: Exception) {
-            report.appendLine("❌ Error finding activities: ${e.message?.take(50)}")
-        }
-
-        report.appendLine("\n=== SUMMARY ===")
-        report.appendLine("Total redraw successes: $redrawSuccess")
-        
-        lastResult = report.toString()
-        Log.d(TAG, lastResult)
-    }
-}
+                val javaMap = mActivities as java.util.Map<Any, Any>
+                val records
