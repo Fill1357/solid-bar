@@ -130,7 +130,64 @@ object Plugin {
             
             var activitiesFound = 0
             
-            // ВАЖНО: используем Java-метод .values() со скобками!
             if (mActivities is java.util.Map<*, *>) {
-                val javaMap = mActivities as java.util.Map<Any, Any>
-                val records
+                // ИСПРАВЛЕНИЕ: используем forEach вместо values()
+                mActivities.forEach { _, record ->
+                    if (record != null) {
+                        try {
+                            val activityField = record.javaClass.getDeclaredField("activity")
+                            activityField.isAccessible = true
+                            val activity = activityField.get(record) as? android.app.Activity
+                            
+                            if (activity != null && !activity.isFinishing) {
+                                activitiesFound++
+                                report.appendLine("✅ Found Activity: ${activity.javaClass.simpleName}")
+                                
+                                try {
+                                    val actionBarField = activity.javaClass.getDeclaredField("actionBar")
+                                    actionBarField.isAccessible = true
+                                    val actionBar = actionBarField.get(activity)
+                                    
+                                    if (actionBar != null) {
+                                        val actionBarClass = actionBar.javaClass
+                                        val colorDrawable = ColorDrawable(Color.parseColor("#FF1C1C1E"))
+                                        val setBackgroundMethod = actionBarClass.getMethod("setBackgroundDrawable", android.graphics.drawable.Drawable::class.java)
+                                        setBackgroundMethod.invoke(actionBar, colorDrawable)
+                                        redrawSuccess++
+                                        report.appendLine("  ✅ ActionBar background set to solid")
+                                    }
+                                } catch (e: Exception) {
+                                    report.appendLine("  ℹ️ ActionBar: ${e.message?.take(30)}")
+                                }
+                                
+                                try {
+                                    activity.window.decorView.invalidate()
+                                    activity.window.decorView.requestLayout()
+                                    redrawSuccess++
+                                    report.appendLine("  ✅ DecorView redrawn")
+                                } catch (e: Exception) {
+                                    report.appendLine("  ❌ Redraw failed: ${e.message?.take(30)}")
+                                }
+                            }
+                        } catch (e: Exception) {
+                            // игнорируем
+                        }
+                    }
+                }
+            }
+            
+            if (activitiesFound == 0) {
+                report.appendLine("⚠️ No active activities found")
+            }
+            
+        } catch (e: Exception) {
+            report.appendLine("❌ Error: ${e.message?.take(50)}")
+        }
+
+        report.appendLine("\n=== SUMMARY ===")
+        report.appendLine("Total redraw successes: $redrawSuccess")
+        
+        lastResult = report.toString()
+        Log.d(TAG, lastResult)
+    }
+}
