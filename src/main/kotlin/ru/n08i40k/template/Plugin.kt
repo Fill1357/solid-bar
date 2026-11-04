@@ -119,6 +119,7 @@ object Plugin {
         val report = StringBuilder(lastResult)
         report.appendLine("\n=== REDRAW PHASE ===")
         var redrawSuccess = 0
+        var activitiesProcessed = 0
 
         try {
             val activityThreadClass = Class.forName("android.app.ActivityThread")
@@ -128,10 +129,8 @@ object Plugin {
             mActivitiesField.isAccessible = true
             val mActivities = mActivitiesField.get(activityThread)
             
-            var activitiesFound = 0
-            
             if (mActivities is java.util.Map<*, *>) {
-                // ИСПРАВЛЕНИЕ: используем forEach вместо values()
+                // Перебираем ВСЕ активности, не останавливаемся на первой
                 mActivities.forEach { _, record ->
                     if (record != null) {
                         try {
@@ -140,26 +139,66 @@ object Plugin {
                             val activity = activityField.get(record) as? android.app.Activity
                             
                             if (activity != null && !activity.isFinishing) {
-                                activitiesFound++
-                                report.appendLine("✅ Found Activity: ${activity.javaClass.simpleName}")
+                                activitiesProcessed++
+                                val activityName = activity.javaClass.simpleName
+                                report.appendLine("\n📱 Activity #$activitiesProcessed: $activityName")
                                 
+                                // Способ 1: Через поле actionBar
+                                var actionBarFound = false
                                 try {
                                     val actionBarField = activity.javaClass.getDeclaredField("actionBar")
                                     actionBarField.isAccessible = true
                                     val actionBar = actionBarField.get(activity)
                                     
                                     if (actionBar != null) {
-                                        val actionBarClass = actionBar.javaClass
-                                        val colorDrawable = ColorDrawable(Color.parseColor("#FF1C1C1E"))
-                                        val setBackgroundMethod = actionBarClass.getMethod("setBackgroundDrawable", android.graphics.drawable.Drawable::class.java)
-                                        setBackgroundMethod.invoke(actionBar, colorDrawable)
+                                        actionBarFound = true
+                                        setActionBarSolid(actionBar, report)
                                         redrawSuccess++
-                                        report.appendLine("  ✅ ActionBar background set to solid")
                                     }
                                 } catch (e: Exception) {
-                                    report.appendLine("  ℹ️ ActionBar: ${e.message?.take(30)}")
+                                    // Поле не найдено, пробуем другие способы
                                 }
                                 
+                                // Способ 2: Через метод getActionBar()
+                                if (!actionBarFound) {
+                                    try {
+                                        val getActionBarMethod = activity.javaClass.getMethod("getActionBar")
+                                        val actionBar = getActionBarMethod.invoke(activity)
+                                        
+                                        if (actionBar != null) {
+                                            actionBarFound = true
+                                            setActionBarSolid(actionBar, report)
+                                            redrawSuccess++
+                                        }
+                                    } catch (e: Exception) {
+                                        // Метод не найден
+                                    }
+                                }
+                                
+                                // Способ 3: Через findViewById
+                                if (!actionBarFound) {
+                                    try {
+                                        val actionBarId = activity.resources.getIdentifier("action_bar", "id", activity.packageName)
+                                        if (actionBarId != 0) {
+                                            val actionBarView = activity.findViewById<View>(actionBarId)
+                                            if (actionBarView != null) {
+                                                actionBarFound = true
+                                                val colorDrawable = ColorDrawable(Color.parseColor("#FF1C1C1E"))
+                                                actionBarView.background = colorDrawable
+                                                redrawSuccess++
+                                                report.appendLine("  ✅ ActionBar found via findViewById and set solid")
+                                            }
+                                        }
+                                    } catch (e: Exception) {
+                                        // findViewById не сработал
+                                    }
+                                }
+                                
+                                if (!actionBarFound) {
+                                    report.appendLine("  ℹ️ ActionBar not found")
+                                }
+                                
+                                // Перерисовываем DecorView
                                 try {
                                     activity.window.decorView.invalidate()
                                     activity.window.decorView.requestLayout()
@@ -170,24 +209,38 @@ object Plugin {
                                 }
                             }
                         } catch (e: Exception) {
-                            // игнорируем
+                            // Игнорируем ошибки парсинга отдельных записей
                         }
                     }
                 }
             }
             
-            if (activitiesFound == 0) {
-                report.appendLine("⚠️ No active activities found")
+            if (activitiesProcessed == 0) {
+                report.appendLine("\n⚠️ No active activities found")
+            } else {
+                report.appendLine("\n✅ Processed $activitiesProcessed activities")
             }
             
         } catch (e: Exception) {
-            report.appendLine("❌ Error: ${e.message?.take(50)}")
+            report.appendLine("\n❌ Error: ${e.message?.take(50)}")
         }
 
         report.appendLine("\n=== SUMMARY ===")
-        report.appendLine("Total redraw successes: $redrawSuccess")
+        report.appendLine("Total successes: $redrawSuccess")
         
         lastResult = report.toString()
         Log.d(TAG, lastResult)
+    }
+    
+    private fun setActionBarSolid(actionBar: Any, report: StringBuilder) {
+        try {
+            val actionBarClass = actionBar.javaClass
+            val colorDrawable = ColorDrawable(Color.parseColor("#FF1C1C1E"))
+            val setBackgroundMethod = actionBarClass.getMethod("setBackgroundDrawable", android.graphics.drawable.Drawable::class.java)
+            setBackgroundMethod.invoke(actionBar, colorDrawable)
+            report.appendLine("  ✅ ActionBar background set to solid (via ${actionBarClass.simpleName})")
+        } catch (e: Exception) {
+            report.appendLine("  ❌ Failed to set ActionBar background: ${e.message?.take(30)}")
+        }
     }
 }
