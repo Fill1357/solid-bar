@@ -114,7 +114,6 @@ object Plugin {
             report.appendLine("Error reading SharedConfig: ${e.message}")
         }
         
-        // Сохраняем промежуточный результат
         lastResult = report.toString()
     }
 
@@ -123,7 +122,6 @@ object Plugin {
         report.appendLine("\n=== REDRAW PHASE ===")
         var redrawSuccess = 0
 
-        // Пытаемся найти Activity через правильное чтение Map (mActivities)
         try {
             val activityThreadClass = Class.forName("android.app.ActivityThread")
             val activityThread = activityThreadClass.getMethod("currentActivityThread").invoke(null)
@@ -134,9 +132,10 @@ object Plugin {
             
             var activitiesFound = 0
             
-            // mActivities в современном Android - это Map (ArrayMap или HashMap)
+            // mActivities в современном Android - это Map
             if (mActivities is java.util.Map<*, *>) {
-                for (record in mActivities.values) {
+                val activitiesMap = mActivities as java.util.Map<Any, Any>
+                for (record in activitiesMap.values) {
                     if (record != null) {
                         try {
                             val activityField = record.javaClass.getDeclaredField("activity")
@@ -174,9 +173,6 @@ object Plugin {
                                 } catch (e: Exception) {
                                     report.appendLine("  ❌ Failed to invalidate DecorView: ${e.message?.take(30)}")
                                 }
-                                
-                                // Нам достаточно найти одно активное окно
-                                break 
                             }
                         } catch (e: Exception) {
                             // Игнорируем ошибки парсинга отдельных записей
@@ -193,24 +189,8 @@ object Plugin {
             report.appendLine("❌ Error finding activities: ${e.message?.take(50)}")
         }
 
-        // Фолбэк: попытка вызвать Telegram-специфичный метод перерисовки
-        try {
-            val androidUtils = Class.forName("org.telegram.messenger.AndroidUtilities")
-            val runOnUiMethod = androidUtils.getMethod("runOnUIThread", Runnable::class.java)
-            runOnUiMethod.invoke(null, Runnable {
-                // Этот код выполнится в UI потоке Telegram
-                try {
-                    val localeController = Class.forName("org.telegram.messenger.LocaleController").getMethod("getInstance").invoke(null)
-                    // Триггерим обновление темы, если оно есть
-                    report.appendLine("✅ Triggered AndroidUtilities UI thread")
-                } catch (e: Exception) {}
-            })
-        } catch (e: Exception) {
-            // Игнорируем, это опционально
-        }
-
         report.appendLine("\n=== SUMMARY ===")
-        report.appendLine("Total successes: $redrawSuccess")
+        report.appendLine("Total redraw successes: $redrawSuccess")
         
         lastResult = report.toString()
         Log.d(TAG, lastResult)
