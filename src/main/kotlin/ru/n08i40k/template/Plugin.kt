@@ -2,12 +2,15 @@ package ru.n08i40k.template
 
 import android.app.Activity
 import android.app.Application
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.os.Bundle
 import android.util.Log
+import android.view.View
+import android.view.ViewGroup
 import android.webkit.ValueCallback
 import android.widget.Toast
-import android.content.Context
-import java.io.File
 
 object Plugin {
     private const val TAG = "SolidBarPlugin"
@@ -25,36 +28,20 @@ object Plugin {
         try {
             val activityThread = Class.forName("android.app.ActivityThread")
             val currentApp = activityThread.getMethod("currentApplication").invoke(null)
-            val application = currentApp as? Application
-            appContext = application
-            
-            if (application != null) {
-                application.registerActivityLifecycleCallbacks(object : Application.ActivityLifecycleCallbacks {
-                    override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {
-                        handleActivity(activity, "created")
-                    }
-                    override fun onActivityStarted(activity: Activity) {}
-                    override fun onActivityResumed(activity: Activity) {
-                        handleActivity(activity, "resumed")
-                    }
-                    override fun onActivityPaused(activity: Activity) {}
-                    override fun onActivityStopped(activity: Activity) {}
-                    override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}
-                    override fun onActivityDestroyed(activity: Activity) {}
-                })
-                showToast("Plugin loaded! Watching activities...")
-            }
+            appContext = currentApp as? Context
+            showToast("Plugin loaded! Disabling blur...")
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to setup", e)
+            Log.e(TAG, "Failed to get context", e)
             showToast("Error: " + e.message)
         }
         
         disableBlurFlags()
         
         android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-            showToast(lastResult)
-            saveToFile(lastResult)
-        }, 2000)
+            forceRedraw()
+            copyToClipboard(lastResult)
+            showToast("Report copied! Paste it to see details")
+        }, 3000)
     }
 
     @JvmStatic
@@ -73,8 +60,8 @@ object Plugin {
     @JvmStatic
     fun invokeSettingsActionCallback(key: String) {
         if (key == "check_status") {
-            showToast(lastResult)
-            saveToFile(lastResult)
+            copyToClipboard(lastResult)
+            showToast("Debug report copied to clipboard!")
         }
     }
 
@@ -90,14 +77,16 @@ object Plugin {
         }
     }
 
-    private fun saveToFile(content: String) {
+    private fun copyToClipboard(text: String) {
         try {
-            val downloadDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
-            val file = File(downloadDir, "solidbar_debug.txt")
-            file.writeText(content)
-            Log.d(TAG, "Debug saved to: " + file.absolutePath)
+            val clipboard = appContext?.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+            if (clipboard != null) {
+                val clip = ClipData.newPlainText("SolidBar Debug", text)
+                clipboard.setPrimaryClip(clip)
+                Log.d(TAG, "Copied to clipboard: ${text.length} chars")
+            }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to save file", e)
+            Log.e(TAG, "Clipboard error", e)
         }
     }
 
@@ -119,7 +108,7 @@ object Plugin {
                             report.appendLine("✅ Disabled: ${field.name}")
                             Log.d(TAG, "Disabled: ${field.name}")
                         } catch (e: Exception) {
-                            report.appendLine("❌ Failed: ${field.name} - ${e.message?.take(30)}")
+                            report.appendLine("❌ Failed: ${field.name}")
                         }
                     }
                 }
@@ -131,16 +120,92 @@ object Plugin {
         lastResult = report.toString()
     }
 
-    private fun handleActivity(activity: Activity, trigger: String) {
-        val simpleName = activity.javaClass.simpleName
-        Log.d(TAG, "Activity $trigger: $simpleName")
-        
+    private fun forceRedraw() {
+        val report = StringBuilder(lastResult)
+        report.appendLine("\n=== REDRAW PHASE ===")
+        var redrawSuccess = 0
+        var activitiesFound = 0
+
         try {
-            activity.window.decorView.invalidate()
-            activity.window.decorView.requestLayout()
-            Log.d(TAG, "✅ Redrew: $simpleName")
+            val activityThreadClass = Class.forName("android.app.ActivityThread")
+            val activityThread = activityThreadClass.getMethod("currentActivityThread").invoke(null)
+            
+            val mActivitiesField = activityThreadClass.getDeclaredField("mActivities")
+            mActivitiesField.isAccessible = true
+            val mActivities = mActivitiesField.get(activityThread)
+            
+            if (mActivities is java.util.Map<*, *>) {
+                for ((_, record) in mActivities) {
+                    if (record != null) {
+                        try {
+                            val activityField = record.javaClass.getDeclaredField("activity")
+                            activityField.isAccessible = true
+                            val activity = activityField.get(record) as? Activity
+                            
+                            if (activity != null && !activity.isFinishing) {
+                                activitiesFound++
+                                val activityName = activity.javaClass.simpleName
+                                report.appendLine("\n📱 Activity #$activitiesFound: $activityName")
+                                
+                                var actionBarFound = false
+                                
+                                try {
+                                    val actionBarField = activity.javaClass.getDeclaredField("actionBar")
+                                    actionBarField.isAccessible = true
+                                    val actionBar = actionBarField.get(activity)
+                                    if (actionBar != null) {
+                                        actionBarFound = true
+                                        val colorDrawable = android.graphics.drawable.ColorDrawable(android.graphics.Color.parseColor("#FF1C1C1E"))
+                                        val setBackgroundMethod = actionBar.javaClass.getMethod("setBackgroundDrawable", android.graphics.drawable.Drawable::class.java)
+                                        setBackgroundMethod.invoke(actionBar, colorDrawable)
+                                        redrawSuccess++
+                                        report.appendLine("  ✅ ActionBar background set to solid")
+                                    }
+                                } catch (e: Exception) {
+                                    report.appendLine("  ℹ️ No actionBar field")
+                                }
+                                
+                                if (!actionBarFound) {
+                                    try {
+                                        val actionBar = activity.actionBar
+                                        if (actionBar != null) {
+                                            actionBarFound = true
+                                            val colorDrawable = android.graphics.drawable.ColorDrawable(android.graphics.Color.parseColor("#FF1C1C1E"))
+                                            actionBar.setBackgroundDrawable(colorDrawable)
+                                            redrawSuccess++
+                                            report.appendLine("  ✅ ActionBar set via getActionBar()")
+                                        }
+                                    } catch (e: Exception) {}
+                                }
+                                
+                                try {
+                                    activity.window.decorView.invalidate()
+                                    activity.window.decorView.requestLayout()
+                                    redrawSuccess++
+                                    report.appendLine("  ✅ DecorView redrawn")
+                                } catch (e: Exception) {
+                                    report.appendLine("  ❌ Redraw failed")
+                                }
+                            }
+                        } catch (e: Exception) {}
+                    }
+                }
+            }
+            
+            if (activitiesFound == 0) {
+                report.appendLine("\n⚠️ No active activities found")
+            } else {
+                report.appendLine("\n✅ Processed $activitiesFound activities")
+            }
+            
         } catch (e: Exception) {
-            Log.e(TAG, "Error handling $simpleName", e)
+            report.appendLine("\n❌ Error: ${e.message?.take(100)}")
         }
+
+        report.appendLine("\n=== SUMMARY ===")
+        report.appendLine("Total redraw successes: $redrawSuccess")
+        
+        lastResult = report.toString()
+        Log.d(TAG, lastResult)
     }
 }
