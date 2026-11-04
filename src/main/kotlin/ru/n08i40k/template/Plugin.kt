@@ -26,15 +26,20 @@ object Plugin {
             val activityThread = Class.forName("android.app.ActivityThread")
             val currentApp = activityThread.getMethod("currentApplication").invoke(null)
             appContext = currentApp as? Context
-            showToast("Plugin loaded! Starting in 5s...")
+            showToast("Plugin loaded! Disabling blur...")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to get context", e)
             showToast("Error: " + e.message)
         }
         
+        // Отключаем blur СРАЗУ, без задержки
+        disableBlur()
+        
+        // Через 3 секунды показываем результат
         android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-            makeBarsSilent()
-        }, 5000)
+            showToast(lastResult)
+            saveToFile(lastResult)
+        }, 3000)
     }
 
     @JvmStatic
@@ -55,7 +60,6 @@ object Plugin {
         if (key == "check_status") {
             showToast(lastResult)
             saveToFile(lastResult)
-            showToast("Debug saved to /sdcard/Download/solidbar_debug.txt")
         }
     }
 
@@ -82,196 +86,143 @@ object Plugin {
         }
     }
 
-    private fun makeBarsSilent() {
+    private fun disableBlur() {
         val context = appContext ?: run {
-            lastResult = "Error: No context available"
-            Log.e(TAG, "No context available")
-            saveToFile(lastResult)
+            lastResult = "Error: No context"
             return
         }
 
         val report = StringBuilder()
-        report.appendLine("=== Solid Interface Debug Report ===")
-        report.appendLine("Time: ${System.currentTimeMillis()}")
-        report.appendLine()
-
+        report.appendLine("=== Solid Interface Debug ===")
+        
         var successCount = 0
 
-        // === ДИАГНОСТИКА 1: Все поля SharedConfig ===
-        report.appendLine("=== SHARED CONFIG FIELDS ===")
+        // 1. Отключаем useNewBlur и другие поля
         try {
             val sharedConfigClass = Class.forName("org.telegram.messenger.SharedConfig")
-            val fields = sharedConfigClass.declaredFields
-            report.appendLine("Total fields: ${fields.size}")
-            
-            var blurFieldsFound = 0
-            for (field in fields) {
+            for (field in sharedConfigClass.declaredFields) {
                 val name = field.name.lowercase()
-                if (name.contains("blur") || name.contains("glass") || name.contains("liquid") || 
-                    name.contains("round") || name.contains("circle") || name.contains("opaque") ||
-                    name.contains("background") || name.contains("draw")) {
-                    blurFieldsFound++
-                    report.appendLine("  ${field.name} : ${field.type.simpleName}")
-                    
-                    // Пробуем отключить boolean поля
+                if (name.contains("blur") || name.contains("glass") || name.contains("liquid")) {
                     field.isAccessible = true
                     if (field.type == Boolean::class.java || field.type == Boolean::class.javaPrimitiveType) {
                         try {
                             field.set(null, false)
                             successCount++
-                            report.appendLine("    -> Disabled (set to false)")
+                            report.appendLine("✅ Disabled: ${field.name}")
+                            Log.d(TAG, "Disabled: ${field.name}")
                         } catch (e: Exception) {
-                            report.appendLine("    -> Failed: ${e.message?.take(50)}")
+                            report.appendLine("❌ Failed: ${field.name} - ${e.message?.take(30)}")
                         }
                     }
                 }
             }
-            report.appendLine("Blur-related fields found: $blurFieldsFound")
         } catch (e: Exception) {
             report.appendLine("Error: ${e.message}")
         }
-        report.appendLine()
 
-        // === ДИАГНОСТИКА 2: ActionBar ===
-        report.appendLine("=== ACTION BAR ===")
+        // 2. Пытаемся найти Activity через другой метод
         try {
-            val actionBarClass = Class.forName("org.telegram.ui.ActionBar.ActionBar")
-            report.appendLine("ActionBar class found: ${actionBarClass.name}")
+            val activityThreadClass = Class.forName("android.app.ActivityThread")
+            val activityThread = activityThreadClass.getMethod("currentActivityThread").invoke(null)
             
-            val activityThread = Class.forName("android.app.ActivityThread")
-            val currentActivityThread = activityThread.getMethod("currentActivityThread").invoke(null)
-            val activitiesField = currentActivityThread.javaClass.getDeclaredField("mActivities")
-            activitiesField.isAccessible = true
-            val activities = activitiesField.get(currentActivityThread)
+            // Получаем все активности через getActivities()
+            val getActivitiesMethod = activityThreadClass.getMethod("getActivities")
+            val activities = getActivitiesMethod.invoke(activityThread) as? Array<*>
             
-            var activityCount = 0
-            var actionBarFound = 0
-            
-            if (activities != null) {
-                val activitiesArray = if (activities is Array<*>) activities else (activities as? Collection<*>)?.toTypedArray()
-                if (activitiesArray != null) {
-                    report.appendLine("Activities found: ${activitiesArray.size}")
+            if (activities != null && activities.isNotEmpty()) {
+                report.appendLine("Found ${activities.size} activities via getActivities()")
+                
+                for (activity in activities) {
+                    if (activity == null) continue
                     
-                    for (activityRecord in activitiesArray) {
-                        if (activityRecord == null) continue
-                        activityCount++
+                    try {
+                        val activityObj = activity as android.app.Activity
                         
+                        // Ищем ActionBar
                         try {
-                            val activityField = activityRecord.javaClass.getDeclaredField("activity")
-                            activityField.isAccessible = true
-                            val activity = activityField.get(activityRecord)
+                            val actionBarField = activityObj.javaClass.getDeclaredField("actionBar")
+                            actionBarField.isAccessible = true
+                            val actionBar = actionBarField.get(activityObj)
                             
-                            if (activity != null) {
-                                report.appendLine("  Activity: ${activity.javaClass.simpleName}")
+                            if (actionBar != null) {
+                                report.appendLine("✅ Found ActionBar in ${activityObj.javaClass.simpleName}")
                                 
-                                val actionBarField = activity.javaClass.getDeclaredField("actionBar")
-                                actionBarField.isAccessible = true
-                                val actionBar = actionBarField.get(activity)
-                                
-                                if (actionBar != null && actionBarClass.isInstance(actionBar)) {
-                                    actionBarFound++
-                                    report.appendLine("    ActionBar: FOUND")
-                                    
-                                    // Пробуем установить фон
-                                    try {
-                                        val colorDrawable = ColorDrawable(Color.parseColor("#FF1C1C1E"))
-                                        val setBackgroundMethod = actionBarClass.getMethod("setBackgroundDrawable", android.graphics.drawable.Drawable::class.java)
-                                        setBackgroundMethod.invoke(actionBar, colorDrawable)
-                                        successCount++
-                                        report.appendLine("    -> Background set to solid color")
-                                    } catch (e: Exception) {
-                                        report.appendLine("    -> Failed to set background: ${e.message?.take(50)}")
-                                    }
-                                } else {
-                                    report.appendLine("    ActionBar: null or wrong type")
+                                // Устанавливаем непрозрачный фон
+                                try {
+                                    val actionBarClass = actionBar.javaClass
+                                    val colorDrawable = ColorDrawable(Color.parseColor("#FF1C1C1E"))
+                                    val setBackgroundMethod = actionBarClass.getMethod("setBackgroundDrawable", android.graphics.drawable.Drawable::class.java)
+                                    setBackgroundMethod.invoke(actionBar, colorDrawable)
+                                    successCount++
+                                    report.appendLine("  ✅ Set solid background")
+                                } catch (e: Exception) {
+                                    report.appendLine("  ❌ Failed to set background: ${e.message?.take(30)}")
                                 }
                             }
                         } catch (e: Exception) {
-                            report.appendLine("  Error: ${e.message?.take(50)}")
+                            report.appendLine("No ActionBar in ${activityObj.javaClass.simpleName}")
+                        }
+                        
+                        // Перерисовываем контент
+                        try {
+                            val contentView = activityObj.findViewById<View>(android.R.id.content)
+                            if (contentView != null) {
+                                contentView.invalidate()
+                                contentView.requestLayout()
+                                successCount++
+                                report.appendLine("  ✅ Redraw content")
+                            }
+                        } catch (e: Exception) {
+                            report.appendLine("  ❌ Failed to redraw: ${e.message?.take(30)}")
+                        }
+                        
+                    } catch (e: Exception) {
+                        report.appendLine("Error processing activity: ${e.message?.take(30)}")
+                    }
+                }
+            } else {
+                report.appendLine("No activities found via getActivities()")
+            }
+        } catch (e: Exception) {
+            report.appendLine("Error finding activities: ${e.message?.take(50)}")
+        }
+
+        // 3. Принудительно перерисовываем все окна
+        try {
+            val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager
+            val windowManagerClass = windowManager.javaClass
+            
+            // Получаем все окна
+            val getWindowManager = Class.forName("android.view.WindowManagerImpl")
+            val mGlobalField = windowManagerClass.getDeclaredField("mGlobal")
+            mGlobalField.isAccessible = true
+            val mGlobal = mGlobalField.get(windowManager)
+            
+            if (mGlobal != null) {
+                val viewsField = mGlobal.javaClass.getDeclaredField("mViews")
+                viewsField.isAccessible = true
+                val views = viewsField.get(mGlobal) as? Array<*>
+                
+                if (views != null) {
+                    report.appendLine("Found ${views.size} windows")
+                    for (view in views) {
+                        if (view is View) {
+                            view.invalidate()
+                            view.requestLayout()
+                            successCount++
                         }
                     }
+                    report.appendLine("✅ Redraw all windows")
                 }
             }
-            report.appendLine("Total activities: $activityCount, ActionBars found: $actionBarFound")
         } catch (e: Exception) {
-            report.appendLine("Error: ${e.message}")
+            report.appendLine("Error redrawing windows: ${e.message?.take(50)}")
         }
-        report.appendLine()
 
-        // === ДИАГНОСТИКА 3: Theme ===
-        report.appendLine("=== THEME ===")
-        try {
-            val themeClass = Class.forName("org.telegram.messenger.Theme")
-            report.appendLine("Theme class found: ${themeClass.name}")
-            
-            var colorFieldsChanged = 0
-            for (field in themeClass.declaredFields) {
-                val name = field.name.lowercase()
-                if (name.contains("wallpaper") || name.contains("background") || name.contains("chat")) {
-                    field.isAccessible = true
-                    if (field.type == Int::class.java || field.type == Int::class.javaPrimitiveType) {
-                        try {
-                            val oldValue = field.get(null) as Int
-                            field.set(null, Color.parseColor("#FF1C1C1E"))
-                            colorFieldsChanged++
-                            report.appendLine("  ${field.name}: $oldValue -> #FF1C1C1E")
-                        } catch (e: Exception) {}
-                    }
-                }
-            }
-            report.appendLine("Color fields changed: $colorFieldsChanged")
-            if (colorFieldsChanged > 0) successCount++
-        } catch (e: Exception) {
-            report.appendLine("Error: ${e.message}")
-        }
         report.appendLine()
-
-        // === ДИАГНОСТИКА 4: Redraw ===
-        report.appendLine("=== REDRAW ===")
-        try {
-            val activityThread = Class.forName("android.app.ActivityThread")
-            val currentActivityThread = activityThread.getMethod("currentActivityThread").invoke(null)
-            val activitiesField = currentActivityThread.javaClass.getDeclaredField("mActivities")
-            activitiesField.isAccessible = true
-            val activities = activitiesField.get(currentActivityThread)
-            
-            var redrawCount = 0
-            if (activities != null) {
-                val activitiesArray = if (activities is Array<*>) activities else (activities as? Collection<*>)?.toTypedArray()
-                if (activitiesArray != null) {
-                    for (activityRecord in activitiesArray) {
-                        if (activityRecord == null) continue
-                        try {
-                            val activityField = activityRecord.javaClass.getDeclaredField("activity")
-                            activityField.isAccessible = true
-                            val activity = activityField.get(activityRecord)
-                            
-                            if (activity != null) {
-                                val contentView = (activity as android.app.Activity).findViewById<View>(android.R.id.content)
-                                if (contentView != null) {
-                                    contentView.invalidate()
-                                    contentView.requestLayout()
-                                    redrawCount++
-                                }
-                            }
-                        } catch (e: Exception) {}
-                    }
-                }
-            }
-            report.appendLine("Views invalidated: $redrawCount")
-            if (redrawCount > 0) successCount++
-        } catch (e: Exception) {
-            report.appendLine("Error: ${e.message}")
-        }
-        report.appendLine()
-
-        // === ИТОГ ===
-        report.appendLine("=== SUMMARY ===")
         report.appendLine("Total successes: $successCount")
         
         lastResult = report.toString()
         Log.d(TAG, lastResult)
-        saveToFile(lastResult)
-        showToast("Debug saved! Check /sdcard/Download/solidbar_debug.txt")
     }
 }
