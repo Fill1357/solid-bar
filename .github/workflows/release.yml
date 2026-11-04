@@ -1,236 +1,103 @@
-package ru.n08i40k.template
+name: Release
 
-import android.util.Log
-import android.webkit.ValueCallback
-import android.widget.Toast
-import android.content.Context
-import android.graphics.Color
-import android.graphics.drawable.ColorDrawable
-import android.view.View
-import java.io.File
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (leave empty for auto)'
+        required: false
+        type: string
+        default: ''
 
-object Plugin {
-    private const val TAG = "SolidBarPlugin"
-    private var appContext: Context? = null
-    private var lastResult: String = "No data yet"
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
 
-    @JvmStatic
-    fun getBuildDate(): String = "2026-11-04"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    @JvmStatic
-    fun inject(version: String, logger: ValueCallback<Any?>) {
-        Log.d(TAG, "✅ Solid Bar Plugin loaded! Version: $version")
-        logger.onReceiveValue("Plugin loaded successfully")
-        
-        try {
-            val activityThread = Class.forName("android.app.ActivityThread")
-            val currentApp = activityThread.getMethod("currentApplication").invoke(null)
-            appContext = currentApp as? Context
-            showToast("Plugin loaded! Disabling blur...")
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to get context", e)
-            showToast("Error: " + e.message)
-        }
-        
-        disableBlurFlags()
-        
-        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-            forceRedraw()
-            showToast(lastResult)
-            saveToFile(lastResult)
-        }, 2000)
-    }
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
 
-    @JvmStatic
-    fun finalizeInject() {
-        Log.d(TAG, "✅ Solid Bar Plugin initialization complete")
-    }
+      - name: Setup Gradle Cache
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          cache-read-only: false
 
-    @JvmStatic
-    fun eject() {
-        Log.d(TAG, "🗑️ Solid Bar Plugin ejected")
-    }
+      - name: Point Gradle to runner Android SDK
+        run: echo "sdk.dir=$ANDROID_HOME" > local.properties
 
-    @JvmStatic
-    fun invokeChatContextMenuCallback(key: String, dialogId: Long) {}
+      - name: Prepare Telegram Stub Jar
+        run: |
+          mkdir -p libs
+          mkdir -p org/telegram/ui/ActionBar
+          echo "package org.telegram.ui.ActionBar; public class ActionBar {}" > org/telegram/ui/ActionBar/ActionBar.java
+          javac org/telegram/ui/ActionBar/ActionBar.java
+          jar cf libs/Telegram.stripped.jar org/telegram/ui/ActionBar/ActionBar.class
+          rm -rf org
 
-    @JvmStatic
-    fun invokeSettingsActionCallback(key: String) {
-        if (key == "check_status") {
-            showToast(lastResult)
-            saveToFile(lastResult)
-        }
-    }
+      - name: Build DEX and Create Plugin
+        env:
+          GRADLE_OPTS: -Dorg.gradle.daemon=false
+          VERSION_INPUT: ${{ inputs.version }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          chmod +x gradlew
+          ./gradlew :buildDexRelease -Dorg.gradle.daemon=false
+          python3 << 'PYEOF'
+          import base64, lzma, sys, os, shutil
+          
+          version = os.environ.get('VERSION_INPUT', '')
+          if not version:
+              version = '1.4.' + os.environ.get('RUN_NUMBER', '0')
+          
+          print("Reading compiled DEX...")
+          with open('dist/dex/release/classes.dex', 'rb') as f:
+              dex_data = f.read()
+          print("DEX size: " + str(len(dex_data)) + " bytes")
+          print("Compressing and encoding DEX...")
+          compressed = lzma.compress(dex_data)
+          b64_data = base64.b64encode(compressed).decode('ascii')
+          lines = []
+          i = 0
+          while i < len(b64_data):
+              lines.append('# ' + b64_data[i:i+76])
+              i += 76
+          dex_text = '\n'.join(lines)
+          print("Reading plugin template...")
+          with open('solid_actionbar.py', 'r', encoding='utf-8') as f:
+              content = f.read()
+          content = content.replace('PLACEHOLDER_VERSION', version)
+          content = content.replace('PLACEHOLDER_DEX', dex_text)
+          print("Writing final plugin file...")
+          with open('solid_actionbar_final.py', 'w', encoding='utf-8') as f:
+              f.write(content)
+          print("Plugin file created successfully!")
+          release_dir = os.environ.get('RUNNER_TEMP', '/tmp') + '/release'
+          os.makedirs(release_dir, exist_ok=True)
+          shutil.copy('solid_actionbar_final.py', os.path.join(release_dir, 'solid_actionbar.plugin'))
+          print("Plugin file size:")
+          os.system('ls -lh ' + os.path.join(release_dir, 'solid_actionbar.plugin'))
+          PYEOF
 
-    private fun showToast(message: String) {
-        try {
-            appContext?.let { ctx ->
-                android.os.Handler(android.os.Looper.getMainLooper()).post {
-                    Toast.makeText(ctx, message, Toast.LENGTH_LONG).show()
-                }
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Toast error", e)
-        }
-    }
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: ${{ runner.temp }}/release/solid_actionbar.plugin
 
-    private fun saveToFile(content: String) {
-        try {
-            val downloadDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
-            val file = File(downloadDir, "solidbar_debug.txt")
-            file.writeText(content)
-            Log.d(TAG, "Debug saved to: " + file.absolutePath)
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to save file", e)
-        }
-    }
-
-    private fun disableBlurFlags() {
-        val report = StringBuilder()
-        report.appendLine("=== Solid Interface Debug ===")
-        var successCount = 0
-
-        try {
-            val sharedConfigClass = Class.forName("org.telegram.messenger.SharedConfig")
-            for (field in sharedConfigClass.declaredFields) {
-                val name = field.name.lowercase()
-                if (name.contains("blur") || name.contains("glass") || name.contains("liquid")) {
-                    field.isAccessible = true
-                    if (field.type == Boolean::class.java || field.type == Boolean::class.javaPrimitiveType) {
-                        try {
-                            field.set(null, false)
-                            successCount++
-                            report.appendLine("✅ Disabled: ${field.name}")
-                            Log.d(TAG, "Disabled: ${field.name}")
-                        } catch (e: Exception) {
-                            report.appendLine("❌ Failed: ${field.name} - ${e.message?.take(30)}")
-                        }
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            report.appendLine("Error reading SharedConfig: ${e.message}")
-        }
-        
-        lastResult = report.toString()
-    }
-
-    private fun forceRedraw() {
-        val report = StringBuilder(lastResult)
-        report.appendLine("\n=== REDRAW PHASE ===")
-        var redrawSuccess = 0
-        var activitiesProcessed = 0
-
-        try {
-            val activityThreadClass = Class.forName("android.app.ActivityThread")
-            val activityThread = activityThreadClass.getMethod("currentActivityThread").invoke(null)
-            
-            val mActivitiesField = activityThreadClass.getDeclaredField("mActivities")
-            mActivitiesField.isAccessible = true
-            val mActivities = mActivitiesField.get(activityThread)
-            
-            if (mActivities is java.util.Map<*, *>) {
-                mActivities.forEach { _, record ->
-                    if (record != null) {
-                        try {
-                            val activityField = record.javaClass.getDeclaredField("activity")
-                            activityField.isAccessible = true
-                            val activity = activityField.get(record) as? android.app.Activity
-                            
-                            if (activity != null && !activity.isFinishing) {
-                                activitiesProcessed++
-                                val activityName = activity.javaClass.simpleName
-                                report.appendLine("\n📱 Activity #$activitiesProcessed: $activityName")
-                                
-                                var actionBarFound = false
-                                
-                                // Способ 1: Через поле actionBar
-                                try {
-                                    val actionBarField = activity.javaClass.getDeclaredField("actionBar")
-                                    actionBarField.isAccessible = true
-                                    val actionBar = actionBarField.get(activity)
-                                    if (actionBar != null) {
-                                        actionBarFound = true
-                                        setActionBarSolid(actionBar, report)
-                                        redrawSuccess++
-                                    }
-                                } catch (e: Exception) {}
-                                
-                                // Способ 2: Через метод getActionBar()
-                                if (!actionBarFound) {
-                                    try {
-                                        val getActionBarMethod = activity.javaClass.getMethod("getActionBar")
-                                        val actionBar = getActionBarMethod.invoke(activity)
-                                        if (actionBar != null) {
-                                            actionBarFound = true
-                                            setActionBarSolid(actionBar, report)
-                                            redrawSuccess++
-                                        }
-                                    } catch (e: Exception) {}
-                                }
-                                
-                                // Способ 3: Через findViewById
-                                if (!actionBarFound) {
-                                    try {
-                                        val actionBarId = activity.resources.getIdentifier("action_bar", "id", activity.packageName)
-                                        if (actionBarId != 0) {
-                                            val actionBarView = activity.findViewById<View>(actionBarId)
-                                            if (actionBarView != null) {
-                                                actionBarFound = true
-                                                val colorDrawable = ColorDrawable(Color.parseColor("#FF1C1C1E"))
-                                                actionBarView.background = colorDrawable
-                                                redrawSuccess++
-                                                report.appendLine("  ✅ ActionBar found via findViewById and set solid")
-                                            }
-                                        }
-                                    } catch (e: Exception) {}
-                                }
-                                
-                                if (!actionBarFound) {
-                                    report.appendLine("  ℹ️ ActionBar not found")
-                                }
-                                
-                                // Перерисовываем DecorView
-                                try {
-                                    activity.window.decorView.invalidate()
-                                    activity.window.decorView.requestLayout()
-                                    redrawSuccess++
-                                    report.appendLine("  ✅ DecorView redrawn")
-                                } catch (e: Exception) {
-                                    report.appendLine("  ❌ Redraw failed: ${e.message?.take(30)}")
-                                }
-                            }
-                        } catch (e: Exception) {}
-                    }
-                }
-            }
-            
-            if (activitiesProcessed == 0) {
-                report.appendLine("\n⚠️ No active activities found")
-            } else {
-                report.appendLine("\n✅ Processed $activitiesProcessed activities")
-            }
-            
-        } catch (e: Exception) {
-            report.appendLine("\n❌ Error: ${e.message?.take(50)}")
-        }
-
-        report.appendLine("\n=== SUMMARY ===")
-        report.appendLine("Total successes: $redrawSuccess")
-        
-        lastResult = report.toString()
-        Log.d(TAG, lastResult)
-    }
-    
-    private fun setActionBarSolid(actionBar: Any, report: StringBuilder) {
-        try {
-            val actionBarClass = actionBar.javaClass
-            val colorDrawable = ColorDrawable(Color.parseColor("#FF1C1C1E"))
-            val setBackgroundMethod = actionBarClass.getMethod("setBackgroundDrawable", android.graphics.drawable.Drawable::class.java)
-            setBackgroundMethod.invoke(actionBar, colorDrawable)
-            report.appendLine("  ✅ ActionBar background set to solid")
-        } catch (e: Exception) {
-            report.appendLine("  ❌ Failed to set background: ${e.message?.take(30)}")
-        }
-    }
-}
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ inputs.version || 'auto-' + github.run_number }}
+          name: Release v${{ inputs.version || 'auto-' + github.run_number }}
+          files: ${{ runner.temp }}/release/solid_actionbar.plugin
+          draft: false
+          prerelease: false
