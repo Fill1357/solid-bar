@@ -23,7 +23,7 @@ __id__ = "solid_actionbar"
 __name__ = "Solid Interface"
 __version__ = "PLACEHOLDER_VERSION"
 __author__ = "Fill1357"
-__description__ = "Disables blur and liquid glass globally"
+__description__ = "Restores solid classic chat header and composer bars"
 __min_version__ = "12.1.1"
 
 LOGCAT_TAG = __id__
@@ -34,10 +34,13 @@ PLACEHOLDER_DEX
 # === EMDEDDED DEX END ===
 
 I18N_SETTINGS = dict()
-I18N_SETTINGS["settings.example.title"] = dict(en="Example", ru="Example")
+I18N_SETTINGS["settings.apply.title"] = dict(en="Apply classic chat bars", ru="Применить классические панели")
+I18N_SETTINGS["settings.apply.description"] = dict(en="Remove blur from the chat header and composer", ru="Убрать размытие шапки и поля ввода")
+I18N_SETTINGS["settings.status.title"] = dict(en="Check plugin status", ru="Проверить состояние плагина")
+I18N_SETTINGS["settings.status.description"] = dict(en="Copy the diagnostic report", ru="Скопировать диагностический отчёт")
 I18N_MENU = dict()
-I18N_MENU["menu.chat.example.title"] = dict(en="Example", ru="Example")
-I18N_MENU["menu.chat.example.description"] = dict(en="Example button", ru="Example button")
+I18N_MENU["menu.chat.apply.title"] = dict(en="Classic chat bars", ru="Классические панели чата")
+I18N_MENU["menu.chat.apply.description"] = dict(en="Remove blur from the header and message composer", ru="Убрать размытие шапки и поля ввода")
 I18N_DIALOG = dict()
 I18N_DIALOG["dialog.load_crash.title"] = dict(en="Failed", ru="Failed")
 I18N_DIALOG["dialog.load_crash.message"] = dict(en="Crashed at stage", ru="Crashed at stage")
@@ -135,8 +138,8 @@ class JvmPluginBridge:
         return bytes(payload)
 
 class ChatContextMenu:
-    EXAMPLE = "example"
-    MENU_ITEMS = (dict(key=EXAMPLE, text_key="menu.chat.example.title", subtext_key="menu.chat.example.description", icon="msg_settings", priority=1000),)
+    APPLY_CLASSIC = "apply_classic"
+    MENU_ITEMS = (dict(key=APPLY_CLASSIC, text_key="menu.chat.apply.title", subtext_key="menu.chat.apply.description", icon="msg_settings", priority=1000),)
     PAYLOAD_DIALOG_KEYS = ("dialog_id", "dialogId")
     PAYLOAD_FRAGMENT_KEYS = ("chatActivity", "fragment")
     def __init__(self, plugin):
@@ -159,11 +162,9 @@ class ChatContextMenu:
                 self.plugin.log_exception("Failed to remove chat context menu item " + key, e)
         self._item_ids.clear()
     def _on_click(self, key, payload):
-        dialog_id = self._extract_dialog_id(payload)
-        if dialog_id is None:
-            self.plugin.log("Chat context menu click payload missing dialog id for " + key)
-            self.plugin._show_error(self.plugin._t("status.error.chat.detect_current_failed"))
-            return
+        # The JVM side resolves the currently visible ChatActivity itself.
+        # dialog_id is optional here; some AyuGram menu payloads omit it.
+        dialog_id = self._extract_dialog_id(payload) or 0
         try:
             self.plugin.jvm_plugin.call("invokeChatContextMenuCallback", String(key), Long(dialog_id), types=(String.getClass(), Long.TYPE))
         except Exception as e:
@@ -192,8 +193,14 @@ class SettingsActions:
         return [
             Header(text="Solid Interface Settings"),
             Text(
-                text="Check Plugin Status",
-                subtext="View debug info and copy report",
+                text=self.plugin._t("settings.apply.title"),
+                subtext=self.plugin._t("settings.apply.description"),
+                icon="msg_settings",
+                on_click=lambda _: self._on_click("apply_classic"),
+            ),
+            Text(
+                text=self.plugin._t("settings.status.title"),
+                subtext=self.plugin._t("settings.status.description"),
                 icon="msg_settings",
                 on_click=lambda _: self._on_click(self.CHECK_STATUS),
             ),

@@ -1,4 +1,3 @@
-
 package ru.n08i40k.template
 
 import android.app.Activity
@@ -8,14 +7,21 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import android.view.View
 import android.webkit.ValueCallback
 import android.widget.Toast
 
 object Plugin {
     private const val TAG = "SolidBarPlugin"
-
     private var appContext: Context? = null
     private var lastResult: String = "No data yet"
+
+    private var appliedActionBar: Any? = null
+    private var appliedContentView: Any? = null
+    private var appliedEnterView: Any? = null
+    private var previousBlurredBackground: Boolean? = null
+    private var previousActionBarColor: Int? = null
+    private var previousAllowBlur: Boolean? = null
 
     @JvmStatic
     fun getBuildDate(): String = "2026-11-04"
@@ -24,28 +30,19 @@ object Plugin {
     fun inject(version: String, logger: ValueCallback<Any?>) {
         Log.d(TAG, "Solid Bar Plugin loaded! Version: $version")
         logger.onReceiveValue("Plugin loaded successfully")
-
         try {
             val activityThread = Class.forName("android.app.ActivityThread")
-            val currentApp = activityThread
-                .getMethod("currentApplication")
-                .invoke(null)
-
+            val currentApp = activityThread.getMethod("currentApplication").invoke(null)
             appContext = currentApp as? Context
-
-            showToast("Plugin loaded! Disabling blur...")
+            showToast("Solid Interface loaded")
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to get context", e)
-            showToast("Error: " + e.message)
+            Log.e(TAG, "Failed to get application context", e)
         }
 
-        disableBlurFlags()
-
+        // If the plugin is loaded while a chat is already open, apply immediately.
         Handler(Looper.getMainLooper()).postDelayed({
-            forceRedraw()
-            copyToClipboard(lastResult)
-            showToast("Report copied! Paste it to see details")
-        }, 3000)
+            applyToCurrentChat()
+        }, 700)
     }
 
     @JvmStatic
@@ -55,18 +52,33 @@ object Plugin {
 
     @JvmStatic
     fun eject() {
+        Handler(Looper.getMainLooper()).post { restoreLastChat() }
         Log.d(TAG, "Solid Bar Plugin ejected")
     }
 
     @JvmStatic
     fun invokeChatContextMenuCallback(key: String, dialogId: Long) {
+        if (key == "apply_classic") {
+            Handler(Looper.getMainLooper()).post {
+                val success = applyToCurrentChat()
+                showToast(
+                    if (success) "Classic chat bars applied"
+                    else "Open a chat and try again"
+                )
+            }
+        }
     }
 
     @JvmStatic
     fun invokeSettingsActionCallback(key: String) {
         if (key == "check_status") {
             copyToClipboard(lastResult)
-            showToast("Debug report copied to clipboard!")
+            showToast("Debug report copied to clipboard")
+        } else if (key == "apply_classic") {
+            Handler(Looper.getMainLooper()).post {
+                val success = applyToCurrentChat()
+                showToast(if (success) "Classic chat bars applied" else "Open a chat and try again")
+            }
         }
     }
 
@@ -74,11 +86,7 @@ object Plugin {
         try {
             appContext?.let { ctx ->
                 Handler(Looper.getMainLooper()).post {
-                    Toast.makeText(
-                        ctx,
-                        message,
-                        Toast.LENGTH_LONG
-                    ).show()
+                    Toast.makeText(ctx, message, Toast.LENGTH_LONG).show()
                 }
             }
         } catch (e: Exception) {
@@ -88,279 +96,194 @@ object Plugin {
 
     private fun copyToClipboard(text: String) {
         try {
-            val clipboard = appContext?.getSystemService(
-                Context.CLIPBOARD_SERVICE
-            ) as? ClipboardManager
-
-            if (clipboard != null) {
-                val clip = ClipData.newPlainText(
-                    "SolidBar Debug",
-                    text
-                )
-
-                clipboard.setPrimaryClip(clip)
-
-                Log.d(TAG, "Copied to clipboard: ${text.length} chars")
-            }
+            val clipboard = appContext?.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+            clipboard?.setPrimaryClip(ClipData.newPlainText("Solid Interface", text))
         } catch (e: Exception) {
             Log.e(TAG, "Clipboard error", e)
         }
     }
 
-    private fun disableBlurFlags() {
-        val report = StringBuilder()
-
-        report.appendLine("=== Solid Interface Debug ===")
-
-        var successCount = 0
-
-        try {
-            val sharedConfigClass = Class.forName(
-                "org.telegram.messenger.SharedConfig"
-            )
-
-            for (field in sharedConfigClass.declaredFields) {
-                val name = field.name.lowercase()
-
-                if (
-                    name.contains("blur") ||
-                    name.contains("glass") ||
-                    name.contains("liquid")
-                ) {
-                    field.isAccessible = true
-
-                    if (
-                        field.type == Boolean::class.java ||
-                        field.type == Boolean::class.javaPrimitiveType
-                    ) {
-                        try {
-                            field.set(null, false)
-
-                            successCount++
-
-                            report.appendLine(
-                                "Disabled: ${field.name}"
-                            )
-
-                            Log.d(TAG, "Disabled: ${field.name}")
-
-                        } catch (e: Exception) {
-                            report.appendLine(
-                                "Failed: ${field.name} - ${e.message}"
-                            )
-                        }
-                    }
-                }
+    private fun findField(type: Class<*>, name: String): java.lang.reflect.Field? {
+        var current: Class<*>? = type
+        while (current != null) {
+            try {
+                return current.getDeclaredField(name).apply { isAccessible = true }
+            } catch (_: NoSuchFieldException) {
+                current = current.superclass
             }
-
-        } catch (e: Exception) {
-            report.appendLine(
-                "Error reading SharedConfig: ${e.message}"
-            )
         }
-
-        report.appendLine(
-            "Disabled fields: $successCount"
-        )
-
-        lastResult = report.toString()
+        return null
     }
 
-    private fun forceRedraw() {
-        val report = StringBuilder(lastResult)
-
-        report.appendLine("\n=== REDRAW PHASE ===")
-
-        var redrawSuccess = 0
-        var activitiesFound = 0
-
+    private fun findMethod(type: Class<*>, name: String): java.lang.reflect.Method? {
         try {
-            val activityThreadClass = Class.forName(
-                "android.app.ActivityThread"
-            )
+            return type.getMethod(name).apply { isAccessible = true }
+        } catch (_: NoSuchMethodException) {
+            // Fall back to non-public methods declared in the class hierarchy.
+        }
+        var current: Class<*>? = type
+        while (current != null) {
+            try {
+                return current.getDeclaredMethod(name).apply { isAccessible = true }
+            } catch (_: NoSuchMethodException) {
+                current = current.superclass
+            }
+        }
+        return null
+    }
 
-            val activityThread = activityThreadClass
-                .getMethod("currentActivityThread")
-                .invoke(null)
+    private fun currentChatFragment(): Any? {
+        val threadClass = Class.forName("android.app.ActivityThread")
+        val thread = threadClass.getMethod("currentActivityThread").invoke(null)
+        val activitiesField = findField(threadClass, "mActivities") ?: return null
+        val activities = activitiesField.get(thread) as? Map<*, *> ?: return null
 
-            val mActivitiesField = activityThreadClass
-                .getDeclaredField("mActivities")
+        for (record in activities.values) {
+            if (record == null) continue
+            val activityField = findField(record.javaClass, "activity") ?: continue
+            val activity = activityField.get(record) as? Activity ?: continue
+            if (activity.isFinishing || activity.javaClass.name != "org.telegram.ui.LaunchActivity") continue
 
-            mActivitiesField.isAccessible = true
+            val layoutField = findField(activity.javaClass, "actionBarLayout") ?: continue
+            val layout = layoutField.get(activity) ?: continue
+            val getLastFragment = findMethod(layout.javaClass, "getLastFragment") ?: continue
+            val fragment = getLastFragment.invoke(layout) ?: continue
+            if (fragment.javaClass.name == "org.telegram.ui.ChatActivity") return fragment
+        }
+        return null
+    }
 
-            val mActivities = mActivitiesField.get(activityThread)
+    private fun applyToCurrentChat(): Boolean {
+        val report = StringBuilder()
+        report.appendLine("=== Solid Interface ===")
+        report.appendLine("Target: current ChatActivity")
+        try {
+            val chat = currentChatFragment()
+            if (chat == null) {
+                report.appendLine("No active ChatActivity found")
+                lastResult = report.toString()
+                Log.i(TAG, lastResult)
+                return false
+            }
 
-            // Исправленный перебор Java Map
-            val activitiesMap = mActivities as? Map<*, *>
+            val getActionBar = findMethod(chat.javaClass, "getActionBar")
+            val actionBar = getActionBar?.invoke(chat)
+            var topApplied = false
+            var bottomApplied = false
 
-            if (activitiesMap != null) {
+            if (actionBar != null) {
+                val blurredField = findField(actionBar.javaClass, "blurredBackground")
+                val colorField = findField(actionBar.javaClass, "actionBarColor")
+                val contentField = findField(actionBar.javaClass, "contentView")
 
-                for (entry in activitiesMap.entries) {
+                if (blurredField != null && colorField != null) {
+                    // Keep the theme's own ActionBar color; only replace the blur layer.
+                    val wasBlurred = blurredField.getBoolean(actionBar)
+                    val color = colorField.getInt(actionBar)
+                    val contentView = contentField?.get(actionBar)
 
-                    val record = entry.value
+                    if (appliedActionBar !== actionBar) {
+                        appliedActionBar = actionBar
+                        appliedContentView = contentView
+                        previousBlurredBackground = wasBlurred
+                        previousActionBarColor = color
+                    }
 
-                    if (record != null) {
-                        try {
-                            val activityField = record.javaClass
-                                .getDeclaredField("activity")
+                    blurredField.setBoolean(actionBar, false)
+                    actionBar.javaClass.getMethod("setBackgroundColor", Int::class.javaPrimitiveType)
+                        .invoke(actionBar, color)
 
-                            activityField.isAccessible = true
-
-                            val activity = activityField.get(record)
-                                as? Activity
-
-                            if (
-                                activity != null &&
-                                !activity.isFinishing
-                            ) {
-                                activitiesFound++
-
-                                val activityName =
-                                    activity.javaClass.simpleName
-
-                                report.appendLine(
-                                    "\nActivity #$activitiesFound: $activityName"
-                                )
-
-                                var actionBarFound = false
-
-                                // Поиск ActionBar через рефлексию
-                                try {
-                                    val actionBarField =
-                                        activity.javaClass.getDeclaredField(
-                                            "actionBar"
-                                        )
-
-                                    actionBarField.isAccessible = true
-
-                                    val actionBar =
-                                        actionBarField.get(activity)
-
-                                    if (actionBar != null) {
-                                        actionBarFound = true
-
-                                        val colorDrawable =
-                                            android.graphics.drawable.ColorDrawable(
-                                                android.graphics.Color.parseColor(
-                                                    "#FF1C1C1E"
-                                                )
-                                            )
-
-                                        val setBackgroundMethod =
-                                            actionBar.javaClass.getMethod(
-                                                "setBackgroundDrawable",
-                                                android.graphics.drawable.Drawable::class.java
-                                            )
-
-                                        setBackgroundMethod.invoke(
-                                            actionBar,
-                                            colorDrawable
-                                        )
-
-                                        redrawSuccess++
-
-                                        report.appendLine(
-                                            "ActionBar background set to solid"
-                                        )
-                                    }
-
-                                } catch (e: Exception) {
-                                    report.appendLine(
-                                        "No actionBar field: ${e.message}"
-                                    )
-                                }
-
-                                // Запасной способ через Android API
-                                if (!actionBarFound) {
-                                    try {
-                                        val actionBar = activity.actionBar
-
-                                        if (actionBar != null) {
-                                            val colorDrawable =
-                                                android.graphics.drawable.ColorDrawable(
-                                                    android.graphics.Color.parseColor(
-                                                        "#FF1C1C1E"
-                                                    )
-                                                )
-
-                                            actionBar.setBackgroundDrawable(
-                                                colorDrawable
-                                            )
-
-                                            redrawSuccess++
-
-                                            report.appendLine(
-                                                "ActionBar set via getActionBar()"
-                                            )
-                                        }
-
-                                    } catch (e: Exception) {
-                                        report.appendLine(
-                                            "Android ActionBar unavailable"
-                                        )
-                                    }
-                                }
-
-                                // Перерисовка DecorView
-                                try {
-                                    activity.window.decorView.invalidate()
-                                    activity.window.decorView.requestLayout()
-
-                                    redrawSuccess++
-
-                                    report.appendLine(
-                                        "DecorView redrawn"
-                                    )
-
-                                } catch (e: Exception) {
-                                    report.appendLine(
-                                        "Redraw failed: ${e.message}"
-                                    )
-                                }
-                            }
-
-                        } catch (e: Exception) {
-                            Log.e(
-                                TAG,
-                                "Activity processing error",
-                                e
-                            )
+                    // Remove the ActionBar from the blur-behind drawing list.
+                    if (contentView != null) {
+                        val viewsField = findField(contentView.javaClass, "blurBehindViews")
+                        val views = viewsField?.get(contentView)
+                        if (views is MutableCollection<*>) {
+                            @Suppress("UNCHECKED_CAST")
+                            (views as MutableCollection<Any?>).remove(actionBar)
                         }
                     }
+                    (actionBar as? View)?.invalidate()
+                    topApplied = true
+                    report.appendLine("Top bar: blur disabled; theme color preserved")
+                } else {
+                    report.appendLine("Top bar: required fields not found")
                 }
-
             } else {
-                report.appendLine(
-                    "Activity map unavailable or has unexpected type"
-                )
+                report.appendLine("Top bar: ActionBar unavailable")
             }
 
-            if (activitiesFound == 0) {
-                report.appendLine(
-                    "No active activities found"
-                )
+            val getEnterView = findMethod(chat.javaClass, "getChatActivityEnterView")
+            val enterView = getEnterView?.invoke(chat)
+            if (enterView != null) {
+                val allowBlurField = findField(enterView.javaClass, "allowBlur")
+                if (allowBlurField != null) {
+                    val oldValue = allowBlurField.getBoolean(enterView)
+                    if (appliedEnterView !== enterView) {
+                        appliedEnterView = enterView
+                        previousAllowBlur = oldValue
+                    }
+                    allowBlurField.setBoolean(enterView, false)
+                    (enterView as? View)?.invalidate()
+                    (enterView as? View)?.requestLayout()
+                    bottomApplied = true
+                    report.appendLine("Bottom bar: blur disabled; themed compose paint preserved")
+                } else {
+                    report.appendLine("Bottom bar: allowBlur field not found")
+                }
             } else {
-                report.appendLine(
-                    "Processed $activitiesFound activities"
-                )
+                report.appendLine("Bottom bar: ChatActivityEnterView unavailable")
             }
 
+            val success = topApplied && bottomApplied
+            report.appendLine("Result: " + if (success) "both bars updated" else "partial update")
+            lastResult = report.toString()
+            Log.i(TAG, lastResult)
+            return success
         } catch (e: Exception) {
-            report.appendLine(
-                "Error: ${e.message?.take(100)}"
-            )
-
-            Log.e(TAG, "forceRedraw error", e)
+            report.appendLine("Error: ${e.javaClass.simpleName}: ${e.message}")
+            lastResult = report.toString()
+            Log.e(TAG, "Failed to apply classic chat bars", e)
+            return false
         }
+    }
 
-        report.appendLine("\n=== SUMMARY ===")
+    private fun restoreLastChat() {
+        try {
+            val actionBar = appliedActionBar
+            val contentView = appliedContentView
+            if (actionBar != null) {
+                val wasBlurred = previousBlurredBackground ?: false
+                val color = previousActionBarColor
+                if (wasBlurred && contentView != null) {
+                    actionBar.javaClass.getMethod(
+                        "setDrawBlurBackground",
+                        Class.forName("org.telegram.ui.Components.SizeNotifierFrameLayout")
+                    ).invoke(actionBar, contentView)
+                } else if (color != null) {
+                    actionBar.javaClass.getMethod("setBackgroundColor", Int::class.javaPrimitiveType)
+                        .invoke(actionBar, color)
+                }
+                (actionBar as? View)?.invalidate()
+            }
 
-        report.appendLine(
-            "Total redraw successes: $redrawSuccess"
-        )
-
-        lastResult = report.toString()
-
-        Log.d(TAG, lastResult)
+            val enterView = appliedEnterView
+            if (enterView != null) {
+                val allowBlurField = findField(enterView.javaClass, "allowBlur")
+                val oldValue = previousAllowBlur
+                if (allowBlurField != null && oldValue != null) {
+                    allowBlurField.setBoolean(enterView, oldValue)
+                    (enterView as? View)?.invalidate()
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to restore chat bars", e)
+        } finally {
+            appliedActionBar = null
+            appliedContentView = null
+            appliedEnterView = null
+            previousBlurredBackground = null
+            previousActionBarColor = null
+            previousAllowBlur = null
+        }
     }
 }
