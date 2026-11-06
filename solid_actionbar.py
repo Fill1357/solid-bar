@@ -23,7 +23,7 @@ __id__ = "solid_actionbar"
 __name__ = "Solid Interface"
 __version__ = "PLACEHOLDER_VERSION"
 __author__ = "Fill1357"
-__description__ = "Restores solid classic chat header and composer bars"
+__description__ = "Keeps classic solid chat header and composer bars applied across chat navigation"
 __min_version__ = "12.1.1"
 
 LOGCAT_TAG = __id__
@@ -35,7 +35,7 @@ PLACEHOLDER_DEX
 
 I18N_SETTINGS = dict()
 I18N_SETTINGS["settings.apply.title"] = dict(en="Apply classic chat bars", ru="Применить классические панели")
-I18N_SETTINGS["settings.apply.description"] = dict(en="Remove blur from the chat header and composer", ru="Убрать размытие шапки и поля ввода")
+I18N_SETTINGS["settings.apply.description"] = dict(en="Apply solid backgrounds to the chat header and composer", ru="Применить сплошной фон к шапке и полю ввода")
 I18N_SETTINGS["settings.status.title"] = dict(en="Check plugin status", ru="Проверить состояние плагина")
 I18N_SETTINGS["settings.status.description"] = dict(en="Copy the diagnostic report", ru="Скопировать диагностический отчёт")
 I18N_MENU = dict()
