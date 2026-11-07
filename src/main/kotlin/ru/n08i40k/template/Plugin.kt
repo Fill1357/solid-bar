@@ -1,6 +1,131 @@
+package ru.n08i40k.template
 
-    
-  
+import android.app.Activity
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.os.Handler
+import android.os.Looper
+import android.util.Log
+import android.view.View
+import android.webkit.ValueCallback
+import android.widget.Toast
+import java.lang.reflect.Field
+import java.lang.reflect.Method
+import java.util.IdentityHashMap
+
+object Plugin {
+    private const val TAG = "SolidBarPlugin"
+    private const val POLL_INTERVAL_MS = 450L
+
+    private var appContext: Context? = null
+    private var lastResult: String = "No data yet"
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var monitoring = false
+
+    private data class ActionBarState(
+        val actionBar: Any,
+        val contentView: Any?,
+        val wasBlurred: Boolean,
+        val color: Int,
+        val oldItemsBackgroundColor: Int?
+    )
+
+    private data class EnterViewState(
+        val enterView: Any,
+        val allowBlur: Boolean
+    )
+
+    // Keep original values for every chat screen touched while the plugin is loaded.
+    private val actionBarStates = IdentityHashMap<Any, ActionBarState>()
+    private val enterViewStates = IdentityHashMap<Any, EnterViewState>()
+
+    private val monitorRunnable = object : Runnable {
+        override fun run() {
+            if (!monitoring) return
+            try {
+                applyToCurrentChat("automatic")
+            } catch (e: Exception) {
+                Log.e(TAG, "Automatic chat-bar update failed", e)
+            }
+            mainHandler.postDelayed(this, POLL_INTERVAL_MS)
+        }
+    }
+
+    @JvmStatic
+    fun getBuildDate(): String = "2026-11-06"
+
+    @JvmStatic
+    fun inject(version: String, logger: ValueCallback<Any?>) {
+        Log.d(TAG, "Solid Bar Plugin loaded! Version: $version")
+        logger.onReceiveValue("Plugin loaded successfully")
+        try {
+            val activityThread = Class.forName("android.app.ActivityThread")
+            val currentApp = activityThread.getMethod("currentApplication").invoke(null)
+            appContext = currentApp as? Context
+            showToast("Solid Interface loaded")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to get application context", e)
+        }
+        startMonitoring()
+    }
+
+    @JvmStatic
+    fun finalizeInject() {
+        Log.d(TAG, "Solid Bar Plugin initialization complete")
+    }
+
+    @JvmStatic
+    fun eject() {
+        monitoring = false
+        mainHandler.removeCallbacks(monitorRunnable)
+        mainHandler.post { restoreAllTouchedChats() }
+        Log.d(TAG, "Solid Bar Plugin ejected")
+    }
+
+    @JvmStatic
+    fun invokeChatContextMenuCallback(key: String, dialogId: Long) {
+        if (key == "apply_classic") {
+            mainHandler.post {
+                val success = applyToCurrentChat("manual")
+                showToast(if (success) "Classic chat bars applied" else "Open a chat and try again")
+            }
+        }
+    }
+
+    @JvmStatic
+    fun invokeSettingsActionCallback(key: String) {
+        when (key) {
+            "check_status" -> {
+                copyToClipboard(lastResult)
+                showToast("Debug report copied to clipboard")
+            }
+            "apply_classic" -> mainHandler.post {
+                val success = applyToCurrentChat("manual")
+                showToast(if (success) "Classic chat bars applied" else "Open a chat and try again")
+            }
+        }
+    }
+
+    private fun startMonitoring() {
+        if (monitoring) return
+        monitoring = true
+        mainHandler.removeCallbacks(monitorRunnable)
+        mainHandler.post(monitorRunnable)
+        Log.i(TAG, "ChatActivity monitor started (${POLL_INTERVAL_MS}ms)")
+    }
+
+    private fun showToast(message: String) {
+        try {
+            appContext?.let { ctx ->
+                mainHandler.post {
+                    Toast.makeText(ctx, message, Toast.LENGTH_LONG).show()
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Toast error", e)
+        }
+    }
 
     private fun copyToClipboard(text: String) {
         try {
@@ -48,21 +173,48 @@
     }
 
     private fun currentChatFragment(): Any? {
-        return try {
-            // AyuGram exposes the currently visible fragment through this static method.
-            // Do not inspect ActivityThread.mActivities/actionBarLayout: that lookup
-            // is unreliable in this AyuGram build and was the source of
-            // "No active ChatActivity found".
-            val launchActivityClass = Class.forName("org.telegram.ui.LaunchActivity")
-            val getLastFragment = launchActivityClass.getMethod("getLastFragment")
-            val fragment = getLastFragment.invoke(null) ?: return null
-
-            val chatActivityClass = Class.forName("org.telegram.ui.ChatActivity")
-            if (chatActivityClass.isInstance(fragment)) fragment else null
+        // First use AyuGram's public static helper.
+        try {
+            val launchClass = Class.forName("org.telegram.ui.LaunchActivity")
+            val method = launchClass.getMethod("getLastFragment")
+            val fragment = method.invoke(null)
+            if (fragment != null &&
+                Class.forName("org.telegram.ui.ChatActivity").isInstance(fragment)
+            ) {
+                return fragment
+            }
+            Log.d(TAG, "LaunchActivity.getLastFragment returned: ${fragment?.javaClass?.name ?: "null"}")
         } catch (e: Exception) {
-            Log.e(TAG, "Cannot obtain LaunchActivity.getLastFragment()", e)
-            null
+            Log.w(TAG, "Static getLastFragment lookup failed; trying activity fallback", e)
         }
+
+        // Fallback: find LaunchActivity, then call its navigation-layout getter.
+        try {
+            val threadClass = Class.forName("android.app.ActivityThread")
+            val thread = threadClass.getMethod("currentActivityThread").invoke(null)
+                ?: return null
+            val activitiesField = findField(threadClass, "mActivities") ?: return null
+            val activities = activitiesField.get(thread) as? Map<*, *> ?: return null
+            val launchClass = Class.forName("org.telegram.ui.LaunchActivity")
+            val chatClass = Class.forName("org.telegram.ui.ChatActivity")
+
+            for (record in activities.values) {
+                if (record == null) continue
+                val activityField = findField(record.javaClass, "activity") ?: continue
+                val activity = activityField.get(record) ?: continue
+                if (!launchClass.isInstance(activity)) continue
+
+                val layout = findMethod(activity.javaClass, "getActionBarLayout")
+                    ?.invoke(activity) ?: continue
+                val fragment = findMethod(layout.javaClass, "getLastFragment")
+                    ?.invoke(layout) ?: continue
+                if (chatClass.isInstance(fragment)) return fragment
+                Log.d(TAG, "Current LaunchActivity fragment: ${fragment.javaClass.name}")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Activity fallback failed", e)
+        }
+        return null
     }
 
     private fun applyToCurrentChat(reason: String): Boolean {
@@ -193,4 +345,21 @@
                     method?.invoke(actionBar, content)
                 } else {
                     val setColor = findMethod(actionBar.javaClass, "setBackgroundColor", Int::class.javaPrimitiveType!!)
+                    setColor?.invoke(actionBar, state.color)
+                }
+                (actionBar as? View)?.invalidate()
+            }
 
+            for (state in enterViewStates.values) {
+                val field = findField(state.enterView.javaClass, "allowBlur")
+                if (field != null) field.setBoolean(state.enterView, state.allowBlur)
+                (state.enterView as? View)?.invalidate()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to restore chat bars", e)
+        } finally {
+            actionBarStates.clear()
+            enterViewStates.clear()
+        }
+    }
+}
