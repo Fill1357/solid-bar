@@ -172,48 +172,101 @@ object Plugin {
         return null
     }
 
+    private var lastDetectionReport: String = "Detection not run"
+
     private fun currentChatFragment(): Any? {
-        // First use AyuGram's public static helper.
+        val log = StringBuilder()
+        val launchClassName = "org.telegram.ui.LaunchActivity"
+        val chatClassName = "org.telegram.ui.ChatActivity"
+
         try {
-            val launchClass = Class.forName("org.telegram.ui.LaunchActivity")
-            val method = launchClass.getMethod("getLastFragment")
-            val fragment = method.invoke(null)
-            if (fragment != null &&
-                Class.forName("org.telegram.ui.ChatActivity").isInstance(fragment)
-            ) {
-                return fragment
+            val launchClass = Class.forName(launchClassName)
+            val chatClass = Class.forName(chatClassName)
+            log.append("LaunchActivity class loaded; ")
+
+            // Preferred route for this AyuGram source tree:
+            // LaunchActivity.instance -> getActionBarLayout() -> getLastFragment().
+            try {
+                val instanceField = findField(launchClass, "instance")
+                val launchInstance = instanceField?.get(null)
+                log.append("instance=${if (launchInstance == null) "null" else launchInstance.javaClass.simpleName}; ")
+
+                if (launchInstance != null) {
+                    val layoutMethod = findMethod(launchInstance.javaClass, "getActionBarLayout")
+                    log.append("getActionBarLayout=${layoutMethod != null}; ")
+                    val layout = layoutMethod?.invoke(launchInstance)
+                    log.append("layout=${if (layout == null) "null" else layout.javaClass.simpleName}; ")
+
+                    if (layout != null) {
+                        val lastMethod = findMethod(layout.javaClass, "getLastFragment")
+                        log.append("layout.getLastFragment=${lastMethod != null}; ")
+                        val fragment = lastMethod?.invoke(layout)
+                        log.append("fragment=${fragment?.javaClass?.name ?: "null"}; ")
+                        if (fragment != null && chatClass.isInstance(fragment)) {
+                            lastDetectionReport = "Found through LaunchActivity.instance -> actionBarLayout"
+                            return fragment
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                log.append("instance route error=${e.javaClass.simpleName}:${e.message}; ")
             }
-            Log.d(TAG, "LaunchActivity.getLastFragment returned: ${fragment?.javaClass?.name ?: "null"}")
+
+            // Secondary route: AyuGram's static helper delegates to the same layout.
+            try {
+                val staticMethod = findMethod(launchClass, "getLastFragment")
+                log.append("static getLastFragment=${staticMethod != null}; ")
+                val fragment = staticMethod?.invoke(null)
+                log.append("static fragment=${fragment?.javaClass?.name ?: "null"}; ")
+                if (fragment != null && chatClass.isInstance(fragment)) {
+                    lastDetectionReport = "Found through LaunchActivity.getLastFragment()"
+                    return fragment
+                }
+            } catch (e: Exception) {
+                log.append("static route error=${e.javaClass.simpleName}:${e.message}; ")
+            }
+
+            // Last fallback: enumerate live ActivityThread records and inspect each
+            // LaunchActivity's navigation layout. This also reports whether the
+            // Activity exists but currently displays a different fragment.
+            try {
+                val threadClass = Class.forName("android.app.ActivityThread")
+                val thread = findMethod(threadClass, "currentActivityThread")?.invoke(null)
+                log.append("activityThread=${thread != null}; ")
+                val recordsField = thread?.let { findField(threadClass, "mActivities") }
+                val records = recordsField?.get(thread) as? Map<*, *>
+                log.append("activityRecords=${records?.size ?: -1}; ")
+
+                if (records != null) {
+                    for (record in records.values) {
+                        if (record == null) continue
+                        val activityField = findField(record.javaClass, "activity") ?: continue
+                        val activity = activityField.get(record) ?: continue
+                        if (!launchClass.isInstance(activity)) continue
+
+                        log.append("LaunchActivity record found; ")
+                        val layout = findMethod(activity.javaClass, "getActionBarLayout")
+                            ?.invoke(activity)
+                        log.append("fallback layout=${layout != null}; ")
+                        val fragment = layout?.let {
+                            findMethod(it.javaClass, "getLastFragment")?.invoke(it)
+                        }
+                        log.append("fallback fragment=${fragment?.javaClass?.name ?: "null"}; ")
+                        if (fragment != null && chatClass.isInstance(fragment)) {
+                            lastDetectionReport = "Found through ActivityThread LaunchActivity record"
+                            return fragment
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                log.append("ActivityThread route error=${e.javaClass.simpleName}:${e.message}; ")
+            }
         } catch (e: Exception) {
-            Log.w(TAG, "Static getLastFragment lookup failed; trying activity fallback", e)
+            log.append("class lookup error=${e.javaClass.simpleName}:${e.message}; ")
         }
 
-        // Fallback: find LaunchActivity, then call its navigation-layout getter.
-        try {
-            val threadClass = Class.forName("android.app.ActivityThread")
-            val thread = threadClass.getMethod("currentActivityThread").invoke(null)
-                ?: return null
-            val activitiesField = findField(threadClass, "mActivities") ?: return null
-            val activities = activitiesField.get(thread) as? Map<*, *> ?: return null
-            val launchClass = Class.forName("org.telegram.ui.LaunchActivity")
-            val chatClass = Class.forName("org.telegram.ui.ChatActivity")
-
-            for (record in activities.values) {
-                if (record == null) continue
-                val activityField = findField(record.javaClass, "activity") ?: continue
-                val activity = activityField.get(record) ?: continue
-                if (!launchClass.isInstance(activity)) continue
-
-                val layout = findMethod(activity.javaClass, "getActionBarLayout")
-                    ?.invoke(activity) ?: continue
-                val fragment = findMethod(layout.javaClass, "getLastFragment")
-                    ?.invoke(layout) ?: continue
-                if (chatClass.isInstance(fragment)) return fragment
-                Log.d(TAG, "Current LaunchActivity fragment: ${fragment.javaClass.name}")
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Activity fallback failed", e)
-        }
+        lastDetectionReport = log.toString()
+        Log.w(TAG, "ChatActivity detection failed: $lastDetectionReport")
         return null
     }
 
@@ -226,7 +279,8 @@ object Plugin {
         try {
             val chat = currentChatFragment()
             if (chat == null) {
-                report.appendLine("No active ChatActivity found via LaunchActivity.getLastFragment()")
+                report.appendLine("No active ChatActivity found")
+                report.appendLine("Detection: $lastDetectionReport")
                 lastResult = report.toString()
                 return false
             }
